@@ -7,7 +7,8 @@ from . import router
 num_routers = 0
 
 def main():
-    logging.basicConfig(format='')
+    logging.basicConfig(format='%(message)s')
+    logging.getLogger('proxy').addhan
 
     conf_file = sys.argv[1]
     parse_config(conf_file)
