@@ -1,14 +1,17 @@
 import sys
+import pkg_resources
 import logging
+import logging.config
 
-from . import proxy
-from . import router
+import csci551fg.proxy
+import csci551fg.router
 
 num_routers = 0
 
 def main():
-    logging.basicConfig(format='%(message)s')
-    logging.getLogger('proxy').addhan
+    with open(pkg_resources.resource_filename('csci551fg', 'logging.ini')) as conf:
+        print(conf.readlines())
+        logging.config.fileConfig(conf)
 
     conf_file = sys.argv[1]
     parse_config(conf_file)

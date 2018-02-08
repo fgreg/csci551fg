@@ -8,5 +8,6 @@ setup(
    license='',
    author='Frank',
    author_email='greguska@usc.edu',
-   description=''
+   description='',
+   include_package_data=True
 )
