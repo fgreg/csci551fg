@@ -28,4 +28,12 @@ Install  13 Packages
 
 Total size: 125 M
 Total download size: 1.3 M
-Installed size: 416 
+Installed size: 416
+
+
+
+
+
+
+Python socket library reference and examples
+https://docs.python.org/3/library/socket.html
