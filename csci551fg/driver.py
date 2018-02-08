@@ -8,15 +8,14 @@ import csci551fg.router
 
 num_routers = 0
 
-def main():
-    with open(pkg_resources.resource_filename('csci551fg', 'logging.ini')) as conf:
-        print(conf.readlines())
-        logging.config.fileConfig(conf)
+logging.config.fileConfig(pkg_resources.resource_filename('csci551fg', 'logging.ini'))
+log = logging.getLogger('csci551fg.driver')
 
+def main():
     conf_file = sys.argv[1]
     parse_config(conf_file)
 
-    print(num_routers)
+    log.info("num_routers: %d" % num_routers)
 
 def parse_config(conf_file):
     config = []
