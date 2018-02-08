@@ -28,7 +28,6 @@ def proxy(**kwargs):
     proxy_logger.debug("starting proxy %s" % kwargs)
 
     while True:
-        proxy_logger.debug("true")
         data = my_socket.recv(kwargs['buffer_size'])
         received_pid = int.from_bytes(data, byteorder='big')
         proxy_logger.info("router: %d, pid: %d, port: %d" % (kwargs['routers'].index(received_pid), received_pid, my_socket.getsockname()[1]))
