@@ -7,14 +7,22 @@ import logging.config
 import csci551fg.proxy
 import csci551fg.router
 
+# Global vars used to keep track of configuration
 num_routers = 0
 stage = 1
 
+# For simplicity buffer_size = size of data for now.
+buffer_size = 4
+
+# Setup some basic logging for help with debugging
 logging.config.fileConfig(pkg_resources.resource_filename('csci551fg', 'logging.ini'), disable_existing_loggers=False)
 log = logging.getLogger('csci551fg.driver')
 
 
 def main():
+    """
+    Opens a port, forks routers and starts the proxy.
+    """
     conf_file = sys.argv[1]
     parse_config(conf_file)
 
@@ -36,15 +44,22 @@ def main():
             routers.append(child_pid)
 
     if not child:
-        csci551fg.proxy.proxy(stage=stage, num_routers=num_routers, buffer_size=4, routers=routers)
+        csci551fg.proxy.proxy(stage=stage, num_routers=num_routers,
+            buffer_size=buffer_size, routers=routers)
     else:
         csci551fg.router.setup_log(stage, router_index)
-        csci551fg.router.router(udp_address=udp_address, stage=stage, num_routers=num_routers, router_index=router_index, buffer_size=4)
+        csci551fg.router.router(udp_address=udp_address, stage=stage,
+            num_routers=num_routers, router_index=router_index,
+            buffer_size=buffer_size)
 
     log.debug("pid %d exit" % os.getpid())
 
 
 def parse_config(conf_file):
+    """
+    Parses the configuration file given by conf_file to extract the stage
+     number and number of routers.
+    """
     config = []
     with open(conf_file, mode='r') as conf:
         for line in conf.readlines():
@@ -58,6 +73,6 @@ def parse_config(conf_file):
     global num_routers
     num_routers = int(config[1].split(' ')[-1])
 
-
+# Called when module is run
 if __name__ == '__main__':
     main()
