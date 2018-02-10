@@ -12,7 +12,7 @@ num_routers = 0
 stage = 1
 
 # For simplicity buffer_size = size of data for now.
-buffer_size = 4
+BUFFER_SIZE = 4
 
 # Setup some basic logging for help with debugging
 logging.config.fileConfig(pkg_resources.resource_filename('csci551fg', 'logging.ini'), disable_existing_loggers=False)
@@ -29,7 +29,7 @@ def main():
     log.debug("num_routers: %d" % num_routers)
 
     csci551fg.proxy.setup_log(stage)
-    udp_address = csci551fg.proxy.bind_socket()
+    udp_address = csci551fg.proxy.bind_router_socket()
 
     routers = []
     child = False
@@ -44,13 +44,12 @@ def main():
             routers.append(child_pid)
 
     if not child:
-        csci551fg.proxy.proxy(stage=stage, num_routers=num_routers,
-            buffer_size=buffer_size, routers=routers)
+        csci551fg.proxy.proxy(routers=routers)
     else:
         csci551fg.router.setup_log(stage, router_index)
         csci551fg.router.router(udp_address=udp_address, stage=stage,
             num_routers=num_routers, router_index=router_index,
-            buffer_size=buffer_size)
+            buffer_size=BUFFER_SIZE)
 
     log.debug("pid %d exit" % os.getpid())
 
