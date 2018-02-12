@@ -11,8 +11,9 @@ import csci551fg.router
 num_routers = 0
 stage = 1
 
-# For simplicity buffer_size = size of data for now.
-BUFFER_SIZE = 4
+# Buffer sizes for reading from the socket and tunnel
+UDP_BUFFER_SIZE = 2048
+TUNNEL_BUFFER_SIZE = 2048
 
 # Setup some basic logging for help with debugging
 logging.config.fileConfig(pkg_resources.resource_filename('csci551fg', 'logging.ini'), disable_existing_loggers=False)
@@ -28,6 +29,7 @@ def main():
 
     log.debug("num_routers: %d" % num_routers)
 
+    # Setup log for proxy then open the UDP port for routers
     csci551fg.proxy.setup_log(stage)
     udp_address = csci551fg.proxy.bind_router_socket()
 
@@ -49,7 +51,7 @@ def main():
         csci551fg.router.setup_log(stage, router_index)
         csci551fg.router.router(udp_address=udp_address, stage=stage,
             num_routers=num_routers, router_index=router_index,
-            buffer_size=BUFFER_SIZE)
+            buffer_size=UDP_BUFFER_SIZE)
 
     log.debug("pid %d exit" % os.getpid())
 

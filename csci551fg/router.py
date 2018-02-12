@@ -19,3 +19,8 @@ def router(**kwargs):
     router_sock = socket.socket(family=socket.AF_INET, type=socket.SOCK_DGRAM)
     router_sock.connect(kwargs['udp_address'])
     router_sock.sendall(os.getpid().to_bytes(kwargs['buffer_size'], byteorder='big'))
+
+def icmp_echo_loop(router_sock, buffer_size):
+
+    while True:
+        data, address = router_sock.recvfrom(buffer_size)

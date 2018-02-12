@@ -2,8 +2,9 @@ import logging
 import os
 import socket
 import selectors
+import csci551fg.tunnel
 
-from csci551fg.driver import BUFFER_SIZE
+from csci551fg.driver import UDP_BUFFER_SIZE, TUNNEL_BUFFER_SIZE
 
 proxy_logger = logging.getLogger('csci551fg.proxy')
 proxy_selector = selectors.DefaultSelector()
@@ -27,13 +28,19 @@ def bind_router_socket():
     return my_socket.getsockname()
 
 def read_router(connection, mask):
-    data, address = connection.recvfrom(BUFFER_SIZE)
+    data, address = connection.recvfrom(UDP_BUFFER_SIZE)
     proxy_logger.debug("Proxy received data from router @ %s" % str(address))
     received_pid = int.from_bytes(data, byteorder='big')
     proxy_logger.info("router: %d, pid: %d, port: %d" % (routers.index(received_pid), received_pid, address[1]))
 
+def read_tunnel(tunnel, mask):
+    data = tunnel.read(TUNNEL_BUFFER_SIZE)
+    proxy_logger.debug("Proxy received data from tunnel %s" % str(data))
+
 def proxy(**kwargs):
     proxy_logger.debug("starting proxy %s" % kwargs)
+    my_tunnel = csci551fg.tunnel.tun_alloc("tun1", [csci551fg.tunnel.IFF_TUN, csci551fg.tunnel.IFF_NO_PI])
+    proxy_selector.register(my_tunnel, selectors.EVENT_READ, read_tunnel)
 
     global routers
     routers = kwargs['routers']
