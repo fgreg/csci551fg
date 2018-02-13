@@ -1,1 +1,4 @@
 include csci551fg/logging.ini
+include makefile
+include README.stage1.txt
+include README.stage2.txt
