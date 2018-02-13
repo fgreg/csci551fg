@@ -2,7 +2,9 @@ import logging
 import os
 import socket
 import selectors
+import ipaddress
 import csci551fg.tunnel
+import csci551fg.icmp
 
 from csci551fg.driver import UDP_BUFFER_SIZE, TUNNEL_BUFFER_SIZE
 
@@ -37,10 +39,15 @@ def read_tunnel(tunnel, mask):
     data = tunnel.read(TUNNEL_BUFFER_SIZE)
     proxy_logger.debug("Proxy received data from tunnel %s" % str(data))
 
+    echo_message = csci551fg.icmp.ICMPEcho(data)
+    proxy_logger.info("ICMP from tunnel, src: %s, dst: %s, type: %s", echo_message.source_ipv4, echo_message.destination_ipv4, echo_message.icmp_type)
+
 def proxy(**kwargs):
     proxy_logger.debug("starting proxy %s" % kwargs)
-    my_tunnel = csci551fg.tunnel.tun_alloc("tun1", [csci551fg.tunnel.IFF_TUN, csci551fg.tunnel.IFF_NO_PI])
-    proxy_selector.register(my_tunnel, selectors.EVENT_READ, read_tunnel)
+
+    if kwargs['stage'] == 2:
+        my_tunnel = csci551fg.tunnel.tun_alloc("tun1", [csci551fg.tunnel.IFF_TUN, csci551fg.tunnel.IFF_NO_PI])
+        proxy_selector.register(my_tunnel, selectors.EVENT_READ, read_tunnel)
 
     global routers
     routers = kwargs['routers']

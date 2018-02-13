@@ -46,7 +46,7 @@ def main():
             routers.append(child_pid)
 
     if not child:
-        csci551fg.proxy.proxy(routers=routers)
+        csci551fg.proxy.proxy(routers=routers, stage=stage)
     else:
         csci551fg.router.setup_log(stage, router_index)
         csci551fg.router.router(udp_address=udp_address, stage=stage,

@@ -15,10 +15,11 @@ def setup_log(stage, router_index):
 
 def router(**kwargs):
     router_logger.debug("router args %s" % kwargs)
-    router_logger.info("router: %d, pid: %d, port: %d" % (kwargs['router_index'], os.getpid(), kwargs['udp_address'][1]))
     router_sock = socket.socket(family=socket.AF_INET, type=socket.SOCK_DGRAM)
     router_sock.connect(kwargs['udp_address'])
-    router_sock.sendall(os.getpid().to_bytes(kwargs['buffer_size'], byteorder='big'))
+    if kwargs['stage'] == 1:
+        router_logger.info("router: %d, pid: %d, port: %d" % (kwargs['router_index'], os.getpid(), kwargs['udp_address'][1]))
+        router_sock.sendall(os.getpid().to_bytes(kwargs['buffer_size'], byteorder='big'))
 
 def icmp_echo_loop(router_sock, buffer_size):
 

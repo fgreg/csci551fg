@@ -34,8 +34,8 @@ def tun_alloc(tunnel_name, flags):
     # any tun/tap virtual interface. [5]
     clone_device = "/dev/net/tun"
 
-    # Open file decriptor to the clone device in read/write mode
-    tunnel_file_descriptor = open(clone_device, mode="r+b", buffering=0)
+    # Open file decriptor to the clone device in bytes read/write mode with buffering disabled
+    tunnel_file_descriptor = open(clone_device, mode="rb+", buffering=0)
 
     # Build the request for connecting the tunnel interface
     interface_request = struct.pack("16sH", tunnel_name.encode(), functools.reduce(operator.ior, flags))
