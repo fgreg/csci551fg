@@ -1,9 +1,9 @@
-from setuptools import setup
+from setuptools import setup, find_packages
 
 setup(
    name='csci551fg',
    version='1.0',
-   packages=['csci551fg'],
+   packages=find_packages(),
    url='',
    license='',
    author='Frank',

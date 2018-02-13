@@ -5,8 +5,6 @@ __pycache__
 .idea/
 
 *.out
- build
- build/**/*
- dist
- dist/**/*
+ build/
+ dist/
 proja
