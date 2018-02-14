@@ -53,7 +53,7 @@ def handle_udp_socket(udp_socket, mask, stage=None):
 
         # Don't try to handle any ICMP packets before we get a hello from every router
         if any(router["address"] is None for router in routers):
-            received_pid = int.from_bytes(data, byteorder=sys.byteorder)
+            received_pid = int.from_bytes(data, byteorder='big')
             router = next(router for router in routers if router["pid"] == received_pid)
             proxy_logger.info("router: %d, pid: %d, port: %d" \
               % (router['index'], received_pid, address[1]))
