@@ -5,9 +5,12 @@ setup(
    version='proja.stage2',
    packages=find_packages(),
    url='https://github.com/fgreg/csci551fg',
-   license=open('LICENSE.txt').text,
+   license="AGPL-3.0",
    author='Frank Greguska',
    author_email='greguska@usc.edu',
    description='Module for USC CSCI 551 Spring 2018 that completes the practical project requirements.',
-   include_package_data=True
+   include_package_data=True,
+   classifiers=[
+    'License :: GNU AFFERO GENERAL PUBLIC LICENSE :: Version 3'
+   ]
 )
