@@ -1,3 +1,8 @@
+"""
+This module is responsible for handling the proxy. It logs to the appropriate files
+and read/write to both the UDP socket and the Tunnel pipes. Messages are stored
+in memory while they are waiting to be written to one of the pipes.
+"""
 import logging
 import sys
 import os

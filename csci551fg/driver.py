@@ -1,3 +1,7 @@
+"""
+This module parses the configuration file, sets up logging, initializes the UDP
+socket, and then forks to run the proxy and the router.
+"""
 import sys
 import os
 import pkg_resources

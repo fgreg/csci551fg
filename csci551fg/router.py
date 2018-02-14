@@ -1,3 +1,7 @@
+"""
+This file is responsible for the router functions. It handles logging to the
+correct files and responding to ICMP echo requests.
+"""
 import logging
 import os
 import socket

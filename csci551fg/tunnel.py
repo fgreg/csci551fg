@@ -38,8 +38,11 @@ def tun_alloc(tunnel_name, flags):
     tunnel_file_descriptor = open(clone_device, mode="rb+", buffering=0)
 
     # Build the request for connecting the tunnel interface
+    # 16sH is a 16 byte char[] followed by a short
+    # 16 because that is the size of IFNAMSIZ (The name of the tunnel)
     interface_request = struct.pack("16sH", tunnel_name.encode(), functools.reduce(operator.ior, flags))
 
+    # Set the name of the tunnel and flags. This essentially connects to the tunnel
     fcntl.ioctl(tunnel_file_descriptor, TUNSETIFF, interface_request)
 
     return tunnel_file_descriptor
