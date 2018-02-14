@@ -1,3 +1,5 @@
+# Copyright 2018, Frank Greguska, All rights reserved.
+
 """
 This module is responsible for handling the proxy. It logs to the appropriate files
 and read/write to both the UDP socket and the Tunnel pipes. Messages are stored

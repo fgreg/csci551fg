@@ -1,3 +1,5 @@
+# Copyright 2018, Frank Greguska, All rights reserved.
+
 """
 This file contains a class responsible for parsing an ICMP echo packet and constructing replies
 """

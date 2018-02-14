@@ -1,3 +1,5 @@
+# Copyright 2018, Frank Greguska, All rights reserved.
+
 """
 This module parses the configuration file, sets up logging, initializes the UDP
 socket, and then forks to run the proxy and the router.

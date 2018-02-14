@@ -1,3 +1,5 @@
+# Copyright 2018, Frank Greguska, All rights reserved.
+
 """
 This file is responsible for the router functions. It handles logging to the
 correct files and responding to ICMP echo requests.

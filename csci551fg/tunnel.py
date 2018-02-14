@@ -1,3 +1,5 @@
+# Copyright 2018, Frank Greguska, All rights reserved.
+
 """
 This module handles opening a connection to a tun/tap interface.
 
