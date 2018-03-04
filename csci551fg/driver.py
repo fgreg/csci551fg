@@ -19,7 +19,11 @@ import csci551fg.router
 num_routers = 0
 stage = 1
 
+# External interfaces available for assignment to routers
 INTERFACES = [(ipaddress.IPv4Address('192.168.201.2'), 'eth1')]
+
+# The address space of the routers
+ROUTER_SUBNET = ipaddress.IPv4Network('10.5.51.0/24')
 
 # Buffer sizes for reading from the socket and tunnel
 UDP_BUFFER_SIZE = 2048
@@ -32,7 +36,7 @@ log = logging.getLogger('csci551fg.driver')
 RouterConfig = namedtuple('RouterConfig', [
     'udp_address', 'stage', 'num_routers',
     'router_index', 'buffer_size', 'ip_address',
-    'interface_name', 'pid'
+    'interface_name', 'pid', 'router_subnet'
 ])
 
 def main():
@@ -67,7 +71,7 @@ def main():
         router_conf = RouterConfig(udp_address=udp_address, stage=stage,
             num_routers=num_routers, router_index=router_index,
             buffer_size=UDP_BUFFER_SIZE, ip_address=inteface[0], interface_name=inteface[1],
-            pid=os.getpid())
+            pid=os.getpid(), router_subnet=ROUTER_SUBNET)
         csci551fg.router.setup_log(stage, router_conf.router_index)
         csci551fg.router.router(router_conf)
 

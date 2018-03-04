@@ -28,6 +28,9 @@ class ICMPEcho(object):
             % (self.source_ipv4, self.destination_ipv4, self.icmp_type,
             self.icmp_code, self.checksum, self.identifier, self.sequence_number)
 
+    def set_source(self, source_ipv4):
+        pass
+
     def reply(self):
         reply_data = bytearray(len(self.packet_data))
         # Keep the first 20 bytes the same
@@ -42,6 +45,14 @@ class ICMPEcho(object):
 
         # Retain the rest of the to_bytes
         reply_data[21:] = self.packet_data[21:]
+
+        reply_data = self._checksum(reply_data)
+
+        return ICMPEcho(bytes(reply_data))
+
+    def _checksum(self, packet_data):
+
+        reply_data = packet_data
 
         # Recompute checksum
 
@@ -72,5 +83,4 @@ class ICMPEcho(object):
 
         reply_data[22:24] = struct.pack(">H", checksum)
 
-
-        return ICMPEcho(bytes(reply_data))
+        return reply_data
