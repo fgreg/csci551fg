@@ -19,6 +19,9 @@ router_selector = selectors.DefaultSelector()
 # Queue for messages waiting to be sent out the external interfaces
 _outgoing_external = []
 
+# Queue for messages returning to the proxy
+_incoming_proxy = []
+
 
 def setup_log(stage, router_index):
     router_handler = logging.FileHandler(os.path.join(os.curdir, "stage%d.router%d.out" % (stage, router_index)), mode='w')
@@ -34,7 +37,7 @@ def router(router_conf):
 
     # Setup the connection to the proxy
     proxy_connection = socket.socket(family=socket.AF_INET, type=socket.SOCK_DGRAM)
-    proxy_connection.connect(router_conf.udp_address)
+    proxy_connection.connect(router_conf.proxy_address)
     proxy_connection.sendall(router_conf.pid.to_bytes(router_conf.buffer_size, byteorder="big"))
     router_logger.info("router: %d, pid: %d, port: %d" % (router_conf.router_index, router_conf.pid, proxy_connection.getsockname()[1]))
     proxy_handler = functools.partial(handle_proxy_connection, router_config=router_conf)
@@ -61,33 +64,46 @@ def handle_proxy_connection(proxy_connection, mask, router_config=None):
     if mask & selectors.EVENT_READ:
         data, address = proxy_connection.recvfrom(router_config.buffer_size)
         echo_message = csci551fg.icmp.ICMPEcho(data)
+        router_logger.info("ICMP from port: %s, src: %s, dst: %s, type: %s",
+          address[1], echo_message.source_ipv4, echo_message.destination_ipv4,
+          echo_message.icmp_type)
 
+        # If the echo is addressed to this router or to the router subnet, reply
+        # directly back to the proxy
         if echo_message.destination_ipv4 == router_config.ip_address \
            or echo_message.destination_ipv4 in router_config.router_subnet:
-            router_logger.info("ICMP from port: %s, src: %s, dst: %s, type: %s",
-              address[1], echo_message.source_ipv4, echo_message.destination_ipv4,
-              echo_message.icmp_type)
-
             reply = echo_message.reply()
             router_logger.debug("Router replying with data\n%s" % (reply.packet_data))
 
             proxy_connection.sendto(reply.packet_data, address)
+        # Otherwise, send it out the external interface
         else:
+            outgoing = echo_message.set_source(router_config.ip_address)
+            router_logger.debug("Incoming source %s, Outgoing source %s" % (echo_message.source_ipv4, outgoing.source_ipv4))
+            _outgoing_external.append(outgoing)
+    elif mask & selectors.EVENT_WRITE:
+        if _incoming_proxy:
+            echo_message = _incoming_proxy.pop()
 
-            
-
-            _outgoing_external.append(echo_message)
+            proxy_connection.sendto(reply.packet_data, router_config.proxy_address)
 
 def handle_external_connection(external_connection, mask, router_config=None):
-    pass
-    # if mask & selectors.EVENT_READ:
-    #     data, address = external_connection.recvfrom(router_config.buffer_size)
-    #     echo_message = csci551fg.icmp.ICMPEcho(data)
-    #     router_logger.info("ICMP from port: %s, src: %s, dst: %s, type: %s",
-    #       address[1], echo_message.source_ipv4, echo_message.destination_ipv4,
-    #       echo_message.icmp_type)
-    #
-    #     reply = echo_message.reply()
-    #     router_logger.debug("Router replying with data\n%s" % (reply.packet_data))
-    #
-    #     external_connection.sendto(reply.packet_data, address)
+    if mask & selectors.EVENT_READ:
+        data, address = external_connection.recvfrom(router_config.buffer_size)
+        echo_message = csci551fg.icmp.ICMPEcho(data)
+
+        # Only process if it addressed to us
+        if echo_message.destination_ipv4 == router_config.ip_address:
+            router_logger.info("ICMP from raw sock: %s, src: %s, dst: %s, type: %s",
+              address[1], echo_message.source_ipv4, echo_message.destination_ipv4,
+              echo_message.icmp_type)
+
+            incoming = echo_message.set_destination(router_config.proxy_address)
+
+            _incoming_proxy.append(incoming)
+
+    elif mask & selectors.EVENT_WRITE:
+        if _outgoing_external:
+            outgoing = _outgoing_external.pop()
+
+            external_connection.sendmsg([outgoing.packet_data], [(None,None,None)], 0, (str(outgoing.destination_ipv4),0))

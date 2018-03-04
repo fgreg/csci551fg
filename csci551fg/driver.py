@@ -34,7 +34,7 @@ logging.config.fileConfig(pkg_resources.resource_filename('csci551fg', 'logging.
 log = logging.getLogger('csci551fg.driver')
 
 RouterConfig = namedtuple('RouterConfig', [
-    'udp_address', 'stage', 'num_routers',
+    'proxy_address', 'stage', 'num_routers',
     'router_index', 'buffer_size', 'ip_address',
     'interface_name', 'pid', 'router_subnet'
 ])
@@ -50,7 +50,7 @@ def main():
 
     # Setup log for proxy then open the UDP port for routers
     csci551fg.proxy.setup_log(stage)
-    udp_address = csci551fg.proxy.bind_router_socket(stage=stage)
+    proxy_address = csci551fg.proxy.bind_router_socket(stage=stage)
 
     routers = []
     child = False
@@ -68,7 +68,7 @@ def main():
         csci551fg.proxy.proxy(routers=routers, stage=stage)
     else:
         inteface = INTERFACES.pop()
-        router_conf = RouterConfig(udp_address=udp_address, stage=stage,
+        router_conf = RouterConfig(proxy_address=proxy_address, stage=stage,
             num_routers=num_routers, router_index=router_index,
             buffer_size=UDP_BUFFER_SIZE, ip_address=inteface[0], interface_name=inteface[1],
             pid=os.getpid(), router_subnet=ROUTER_SUBNET)

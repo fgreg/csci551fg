@@ -29,7 +29,20 @@ class ICMPEcho(object):
             self.icmp_code, self.checksum, self.identifier, self.sequence_number)
 
     def set_source(self, source_ipv4):
-        pass
+
+        new_packet = bytearray(len(self.packet_data))
+        new_packet[12:16] = source_ipv4.packed
+
+        new_packet = self._calc_checksum(new_packet)
+        return ICMPEcho(bytes(new_packet))
+
+    def set_destination(self, destination_ipv4):
+
+        new_packet = bytearray(len(self.packet_data))
+        new_packet[16:20] = source_ipv4.packed
+
+        new_packet = self._calc_checksum(new_packet)
+        return ICMPEcho(bytes(new_packet))
 
     def reply(self):
         reply_data = bytearray(len(self.packet_data))
@@ -46,11 +59,11 @@ class ICMPEcho(object):
         # Retain the rest of the to_bytes
         reply_data[21:] = self.packet_data[21:]
 
-        reply_data = self._checksum(reply_data)
+        reply_data = self._calc_checksum(reply_data)
 
         return ICMPEcho(bytes(reply_data))
 
-    def _checksum(self, packet_data):
+    def _calc_checksum(self, packet_data):
 
         reply_data = packet_data
 
