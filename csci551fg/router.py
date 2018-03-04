@@ -9,8 +9,12 @@ import os
 import socket
 import sys
 import csci551fg.icmp
+import selectors
+import functools
 
 router_logger = logging.getLogger('csci551fg.router')
+
+router_selector = selectors.DefaultSelector()
 
 
 def setup_log(stage, router_index):
@@ -21,18 +25,35 @@ def setup_log(stage, router_index):
     router_logger.addHandler(router_handler)
     router_logger.setLevel(logging.DEBUG)
 
-def router(**kwargs):
-    router_logger.debug("router args %s" % kwargs)
-    router_sock = socket.socket(family=socket.AF_INET, type=socket.SOCK_DGRAM)
-    router_sock.connect(kwargs['udp_address'])
-    router_sock.sendall(os.getpid().to_bytes(kwargs['buffer_size'], byteorder="big"))
-    router_logger.info("router: %d, pid: %d, port: %d" % (kwargs['router_index'], os.getpid(), router_sock.getsockname()[1]))
-    icmp_echo_loop(router_sock, kwargs['buffer_size'])
+def router(router_conf):
 
-def icmp_echo_loop(router_sock, buffer_size):
+    router_logger.debug("router args %s" % router_conf._asdict())
 
+    # Setup the connection to the proxy
+    proxy_connection = socket.socket(family=socket.AF_INET, type=socket.SOCK_DGRAM)
+    proxy_connection.connect(router_conf.udp_address)
+    proxy_connection.sendall(router_conf.pid.to_bytes(router_conf.buffer_size, byteorder="big"))
+    router_logger.info("router: %d, pid: %d, port: %d" % (router_conf.router_index, router_conf.pid, proxy_connection.getsockname()[1]))
+    proxy_handler = functools.partial(handle_proxy_connection, router_config=router_conf)
+
+    router_selector.register(proxy_connection, selectors.EVENT_READ | selectors.EVENT_WRITE, proxy_handler)
+
+    # Setup the connection to the external interface_name
+    external_connection = socket.socket(family=socket.AF_INET, type=socket.SOCK_RAW, proto=socket.IPPROTO_ICMP)
+    external_connection.bind((str(router_conf.ip_address), 0))
+    router_logger.debug("router %d bound to %s" % (router_conf.router_index, external_connection.getsockname()))
+
+    # Start the select loop
     while True:
-        data, address = router_sock.recvfrom(buffer_size)
+        events = router_selector.select()
+        for key, mask in events:
+            func = key.data
+            func(key.fileobj, mask)
+
+def handle_proxy_connection(proxy_connection, mask, router_config=None):
+
+    if mask & selectors.EVENT_READ:
+        data, address = proxy_connection.recvfrom(router_config.buffer_size)
         echo_message = csci551fg.icmp.ICMPEcho(data)
         router_logger.info("ICMP from port: %s, src: %s, dst: %s, type: %s",
           address[1], echo_message.source_ipv4, echo_message.destination_ipv4,
@@ -41,4 +62,4 @@ def icmp_echo_loop(router_sock, buffer_size):
         reply = echo_message.reply()
         router_logger.debug("Router replying with data\n%s" % (reply.packet_data))
 
-        router_sock.sendto(reply.packet_data, address)
+        proxy_connection.sendto(reply.packet_data, address)

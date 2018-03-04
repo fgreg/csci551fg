@@ -9,6 +9,8 @@ import os
 import pkg_resources
 import logging
 import logging.config
+import ipaddress
+from collections import namedtuple
 
 import csci551fg.proxy
 import csci551fg.router
@@ -16,6 +18,8 @@ import csci551fg.router
 # Global vars used to keep track of configuration
 num_routers = 0
 stage = 1
+
+INTERFACES = [(ipaddress.IPv4Address('192.168.201.2'), 'eth1')]
 
 # Buffer sizes for reading from the socket and tunnel
 UDP_BUFFER_SIZE = 2048
@@ -25,6 +29,11 @@ TUNNEL_BUFFER_SIZE = 2048
 logging.config.fileConfig(pkg_resources.resource_filename('csci551fg', 'logging.ini'), disable_existing_loggers=False)
 log = logging.getLogger('csci551fg.driver')
 
+RouterConfig = namedtuple('RouterConfig', [
+    'udp_address', 'stage', 'num_routers',
+    'router_index', 'buffer_size', 'ip_address',
+    'interface_name', 'pid'
+])
 
 def main():
     """
@@ -54,10 +63,13 @@ def main():
     if not child:
         csci551fg.proxy.proxy(routers=routers, stage=stage)
     else:
-        csci551fg.router.setup_log(stage, router_index)
-        csci551fg.router.router(udp_address=udp_address, stage=stage,
+        inteface = INTERFACES.pop()
+        router_conf = RouterConfig(udp_address=udp_address, stage=stage,
             num_routers=num_routers, router_index=router_index,
-            buffer_size=UDP_BUFFER_SIZE)
+            buffer_size=UDP_BUFFER_SIZE, ip_address=inteface[0], interface_name=inteface[1],
+            pid=os.getpid())
+        csci551fg.router.setup_log(stage, router_conf.router_index)
+        csci551fg.router.router(router_conf)
 
     log.debug("pid %d exit" % os.getpid())
 
