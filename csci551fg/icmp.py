@@ -31,17 +31,21 @@ class ICMPEcho(object):
     def set_source(self, source_ipv4):
 
         new_packet = bytearray(len(self.packet_data))
+        new_packet[:] = self.packet_data
+
         new_packet[12:16] = source_ipv4.packed
 
-        new_packet = self._calc_checksum(new_packet)
+        #new_packet = self._calc_checksum(new_packet)
         return ICMPEcho(bytes(new_packet))
 
     def set_destination(self, destination_ipv4):
 
         new_packet = bytearray(len(self.packet_data))
-        new_packet[16:20] = source_ipv4.packed
+        new_packet[:] = self.packet_data
 
-        new_packet = self._calc_checksum(new_packet)
+        new_packet[16:20] = destination_ipv4.packed
+
+        #new_packet = self._calc_checksum(new_packet)
         return ICMPEcho(bytes(new_packet))
 
     def reply(self):
