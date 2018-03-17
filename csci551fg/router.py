@@ -12,6 +12,7 @@ import csci551fg.icmp
 import selectors
 import functools
 import ipaddress
+import struct
 
 router_logger = logging.getLogger('csci551fg.router')
 
@@ -25,7 +26,7 @@ _incoming_proxy = []
 
 
 def setup_log(stage, router_index):
-    router_handler = logging.FileHandler(os.path.join(os.curdir, "stage%d.router%d.out" % (stage, router_index)), mode='w')
+    router_handler = logging.FileHandler(os.path.join(os.curdir, "stage%d.router%d.out" % (stage, router_index+1)), mode='w')
     router_handler.setFormatter(logging.Formatter("%(message)s"))
     router_handler.setLevel(logging.INFO)
 
@@ -39,8 +40,8 @@ def router(router_conf):
     # Setup the connection to the proxy
     proxy_connection = socket.socket(family=socket.AF_INET, type=socket.SOCK_DGRAM)
     proxy_connection.connect(router_conf.proxy_address)
-    proxy_connection.sendall(router_conf.pid.to_bytes(router_conf.buffer_size, byteorder="big"))
-    router_logger.info("router: %d, pid: %d, port: %d" % (router_conf.router_index, router_conf.pid, proxy_connection.getsockname()[1]))
+    proxy_connection.sendall(struct.pack("!2I", router_conf.pid, int(ipaddress.IPv4Address(router_conf.ip_address))))
+    router_logger.info("router: %d, pid: %d, port: %d" % (router_conf.router_index+1, router_conf.pid, proxy_connection.getsockname()[1]))
     proxy_handler = functools.partial(handle_proxy_connection, router_config=router_conf)
 
     router_selector.register(proxy_connection, selectors.EVENT_READ | selectors.EVENT_WRITE, proxy_handler)
