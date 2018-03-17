@@ -2,7 +2,6 @@ a) No code was reused for this stage.
 
 b) This stage is complete.
 
-c) I don't rewrite the source address in my proxy. I rewrite the source address in my router to match the IP address of that router. This is important because the response should be returned to the router in order to go back through the proxy and out of the tunnel. If the original address was used, the reply would simply go to the originating interface (eth0) instead of passing through my router and proxy.
-
-d) The host OS modifies the outgoing packets and sets the source IP to the IP address of the host before sending it out the external interface.
-
+c) i) It is statistically load balanced because theoretically we are going to get a random distribution of target IP addresses where the IP is one of the 4294967296 possible addresses. Using MOD breaks this overall space into roughly equal 'buckets' where the number of 'buckets' is equal to the number of routers. So each flow per target is equally likely to end up in one of the buckets.
+   ii) Yes
+   iii) If we have a large number of active flows that map to the same 'bucket' our load will become unbalanced.
