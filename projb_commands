@@ -18,6 +18,8 @@ sudo ifconfig eth6 192.168.206.2/24 up
 
 ping -I $IP_OF_ETH0 -c 1 wireless.csail.mit.edu
 
+ping -c 1 -I $IP_OF_ETH0 128.30.2.102; ping -c 2 -I $IP_OF_ETH0 128.30.2.103; ping -c 3 -I $IP_OF_ETH0 128.30.2.104
+
 
 
 sudo ip route add table 9 to 34.244.206.183 dev tun1

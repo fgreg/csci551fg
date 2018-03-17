@@ -59,7 +59,7 @@ def handle_udp_socket(udp_socket, mask, stage=None):
             received_pid, ipv4_address = struct.unpack("!2I", data)
             router = next(router for router in routers if router["pid"] == received_pid)
             proxy_logger.info("router: %d, pid: %d, port: %d" \
-              % (router['index'], received_pid, address[1]))
+              % (router['index']+1, received_pid, address[1]))
 
             router["address"] = address
             router["ipv4_address"] = ipaddress.IPv4Address(ipv4_address)
@@ -91,9 +91,14 @@ def _route_message(message):
 def handle_tunnel(tunnel, mask):
     if mask & selectors.EVENT_READ:
         data = tunnel.read(TUNNEL_BUFFER_SIZE)
+        echo_message = csci551fg.icmp.ICMPEcho(data)
+
+        if(echo_message.source_ipv4 == ipaddress.IPv4Address('0.0.0.0')):
+            proxy_logger.debug("Dropped 0.0.0.0")
+            return
+
         proxy_logger.debug("Proxy received data from tunnel\n%s" % str(data))
 
-        echo_message = csci551fg.icmp.ICMPEcho(data)
         proxy_logger.info("ICMP from tunnel, src: %s, dst: %s, type: %s", echo_message.source_ipv4, echo_message.destination_ipv4, echo_message.icmp_type)
         _echo_messages.append(echo_message)
 
