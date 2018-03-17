@@ -37,11 +37,11 @@ def ip_icmp_checksum(data):
         word = int.from_bytes(checksumdata[i:i+2], 'big')
         checksum += word
 
+    # Add carry bits
+    checksum += (checksum >> 16)
+    
     # Ones compliment and mask to the correct size
     checksum = (~checksum) & 0xffff
-
-    # I have no idea why this is needed but it is.
-    checksum = checksum - 1
 
     return struct.pack("!H", checksum)
 
