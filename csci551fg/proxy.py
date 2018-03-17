@@ -71,7 +71,7 @@ def handle_udp_socket(udp_socket, mask, stage=None):
             _echo_replies.append(echo_message)
 
     if mask & selectors.EVENT_WRITE:
-        if _echo_messages:
+        if all(router["address"] is not None for router in routers) and _echo_messages:
             message = _echo_messages.pop()
             router = routers[0]
             routers = routers[-1:] + routers[:-1]
@@ -96,7 +96,7 @@ def handle_tunnel(tunnel, mask):
 def proxy(**kwargs):
     proxy_logger.debug("starting proxy %s" % kwargs)
 
-    if kwargs['stage'] == 2:
+    if kwargs['stage'] >= 2:
         my_tunnel = csci551fg.tunnel.tun_alloc("tun1", [csci551fg.tunnel.IFF_TUN, csci551fg.tunnel.IFF_NO_PI])
         proxy_selector.register(my_tunnel, selectors.EVENT_READ | selectors.EVENT_WRITE, handle_tunnel)
 
