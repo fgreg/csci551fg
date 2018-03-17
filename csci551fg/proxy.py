@@ -11,6 +11,7 @@ import os
 import socket
 import selectors
 import ipaddress
+import struct
 import functools
 import csci551fg.tunnel
 import csci551fg.icmp
@@ -55,12 +56,13 @@ def handle_udp_socket(udp_socket, mask, stage=None):
 
         # Don't try to handle any ICMP packets before we get a hello from every router
         if any(router["address"] is None for router in routers):
-            received_pid = int.from_bytes(data, byteorder='big')
+            received_pid, ipv4_address = struct.unpack("!2I", data)
             router = next(router for router in routers if router["pid"] == received_pid)
             proxy_logger.info("router: %d, pid: %d, port: %d" \
               % (router['index'], received_pid, address[1]))
 
             router["address"] = address
+            router["ipv4_address"] = ipaddress.IPv4Address(ipv4_address)
             proxy_logger.debug("updated routers %s" % routers)
         else:
             echo_message = csci551fg.icmp.ICMPEcho(data)
@@ -73,9 +75,18 @@ def handle_udp_socket(udp_socket, mask, stage=None):
     if mask & selectors.EVENT_WRITE:
         if all(router["address"] is not None for router in routers) and _echo_messages:
             message = _echo_messages.pop()
-            router = routers[0]
-            routers = routers[-1:] + routers[:-1]
-            udp_socket.sendto(message.packet_data, router['address'])
+
+            router_address = _route_message(message)
+
+            udp_socket.sendto(message.packet_data, router_address)
+
+def _route_message(message):
+
+    destination = message.destination_ipv4
+    target_router = next((r for r in routers if r["ipv4_address"] == destination), routers[int(destination) % len(routers)])
+
+    return target_router['address']
+
 
 def handle_tunnel(tunnel, mask):
     if mask & selectors.EVENT_READ:

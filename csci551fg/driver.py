@@ -20,7 +20,14 @@ num_routers = 0
 stage = 1
 
 # External interfaces available for assignment to routers
-INTERFACES = [(ipaddress.IPv4Address('192.168.201.2'), 'eth1')]
+INTERFACES = [
+    (ipaddress.IPv4Address('192.168.201.2'), 'eth1'),
+    (ipaddress.IPv4Address('192.168.202.2'), 'eth2'),
+    (ipaddress.IPv4Address('192.168.203.2'), 'eth3'),
+    (ipaddress.IPv4Address('192.168.204.2'), 'eth4'),
+    (ipaddress.IPv4Address('192.168.205.2'), 'eth5'),
+    (ipaddress.IPv4Address('192.168.206.2'), 'eth6')
+]
 
 # The address space of the routers
 ROUTER_SUBNET = ipaddress.IPv4Network('10.5.51.0/24')
@@ -67,10 +74,10 @@ def main():
     if not child:
         csci551fg.proxy.proxy(routers=routers, stage=stage)
     else:
-        inteface = INTERFACES.pop()
+        interface = INTERFACES[router_index]
         router_conf = RouterConfig(proxy_address=proxy_address, stage=stage,
             num_routers=num_routers, router_index=router_index,
-            buffer_size=UDP_BUFFER_SIZE, ip_address=inteface[0], interface_name=inteface[1],
+            buffer_size=UDP_BUFFER_SIZE, ip_address=interface[0], interface_name=interface[1],
             pid=os.getpid(), router_subnet=ROUTER_SUBNET)
         csci551fg.router.setup_log(stage, router_conf.router_index)
         csci551fg.router.router(router_conf)
