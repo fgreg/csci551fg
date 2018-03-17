@@ -9,8 +9,6 @@ import os
 import pkg_resources
 import logging
 import logging.config
-import ipaddress
-from collections import namedtuple
 
 import csci551fg.proxy
 import csci551fg.router
@@ -18,12 +16,6 @@ import csci551fg.router
 # Global vars used to keep track of configuration
 num_routers = 0
 stage = 1
-
-# External interfaces available for assignment to routers
-INTERFACES = [(ipaddress.IPv4Address('192.168.201.2'), 'eth1')]
-
-# The address space of the routers
-ROUTER_SUBNET = ipaddress.IPv4Network('10.5.51.0/24')
 
 # Buffer sizes for reading from the socket and tunnel
 UDP_BUFFER_SIZE = 2048
@@ -33,11 +25,6 @@ TUNNEL_BUFFER_SIZE = 2048
 logging.config.fileConfig(pkg_resources.resource_filename('csci551fg', 'logging.ini'), disable_existing_loggers=False)
 log = logging.getLogger('csci551fg.driver')
 
-RouterConfig = namedtuple('RouterConfig', [
-    'proxy_address', 'stage', 'num_routers',
-    'router_index', 'buffer_size', 'ip_address',
-    'interface_name', 'pid', 'router_subnet'
-])
 
 def main():
     """
@@ -50,7 +37,7 @@ def main():
 
     # Setup log for proxy then open the UDP port for routers
     csci551fg.proxy.setup_log(stage)
-    proxy_address = csci551fg.proxy.bind_router_socket(stage=stage)
+    udp_address = csci551fg.proxy.bind_router_socket(stage=stage)
 
     routers = []
     child = False
@@ -67,13 +54,10 @@ def main():
     if not child:
         csci551fg.proxy.proxy(routers=routers, stage=stage)
     else:
-        inteface = INTERFACES.pop()
-        router_conf = RouterConfig(proxy_address=proxy_address, stage=stage,
+        csci551fg.router.setup_log(stage, router_index)
+        csci551fg.router.router(udp_address=udp_address, stage=stage,
             num_routers=num_routers, router_index=router_index,
-            buffer_size=UDP_BUFFER_SIZE, ip_address=inteface[0], interface_name=inteface[1],
-            pid=os.getpid(), router_subnet=ROUTER_SUBNET)
-        csci551fg.router.setup_log(stage, router_conf.router_index)
-        csci551fg.router.router(router_conf)
+            buffer_size=UDP_BUFFER_SIZE)
 
     log.debug("pid %d exit" % os.getpid())
 
