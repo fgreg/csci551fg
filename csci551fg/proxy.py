@@ -14,7 +14,7 @@ import ipaddress
 import struct
 import functools
 import csci551fg.tunnel
-import csci551fg.icmp
+import csci551fg.ipfg
 
 from csci551fg.driver import UDP_BUFFER_SIZE, TUNNEL_BUFFER_SIZE
 
@@ -58,14 +58,20 @@ def handle_udp_socket(udp_socket, mask, stage=None):
         if any(router["address"] is None for router in routers):
             received_pid, ipv4_address = struct.unpack("!2I", data)
             router = next(router for router in routers if router["pid"] == received_pid)
-            proxy_logger.info("router: %d, pid: %d, port: %d" \
-              % (router['index']+1, received_pid, address[1]))
-
             router["address"] = address
-            router["ipv4_address"] = ipaddress.IPv4Address(ipv4_address)
+            if stage >= 4:
+                router["ipv4_address"] = ipaddress.IPv4Address(ipv4_address)
+
+            if stage >= 5:
+                proxy_logger.info("router: %d, pid: %d, port: %d, IP: %s" \
+                    % (router['index']+1, received_pid, address[1], router["ipv4_address"]))
+            else:
+                proxy_logger.info("router: %d, pid: %d, port: %d" \
+                    % (router['index']+1, received_pid, address[1]))
+
             proxy_logger.debug("updated routers %s" % routers)
         else:
-            echo_message = csci551fg.icmp.ICMPEcho(data)
+            echo_message = csci551fg.ipfg.ICMPEcho(data)
             proxy_logger.info("ICMP from port: %s, src: %s, dst: %s, type: %s",
               address[1], echo_message.source_ipv4,
               echo_message.destination_ipv4, echo_message.icmp_type)
@@ -91,7 +97,7 @@ def _route_message(message):
 def handle_tunnel(tunnel, mask):
     if mask & selectors.EVENT_READ:
         data = tunnel.read(TUNNEL_BUFFER_SIZE)
-        echo_message = csci551fg.icmp.ICMPEcho(data)
+        echo_message = csci551fg.ipfg.ICMPEcho(data)
 
         if(echo_message.source_ipv4 == ipaddress.IPv4Address('0.0.0.0')):
             proxy_logger.debug("Dropped 0.0.0.0")

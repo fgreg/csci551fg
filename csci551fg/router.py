@@ -8,7 +8,7 @@ import logging
 import os
 import socket
 import sys
-import csci551fg.icmp
+import csci551fg.ipfg
 import selectors
 import functools
 import ipaddress
@@ -41,7 +41,7 @@ def router(router_conf):
     proxy_connection = socket.socket(family=socket.AF_INET, type=socket.SOCK_DGRAM)
     proxy_connection.connect(router_conf.proxy_address)
     proxy_connection.sendall(struct.pack("!2I", router_conf.pid, int(ipaddress.IPv4Address(router_conf.ip_address))))
-    router_logger.info("router: %d, pid: %d, port: %d" % (router_conf.router_index+1, router_conf.pid, proxy_connection.getsockname()[1]))
+    router_logger.info("router: %d, pid: %d, port: %d, IP: %s" % (router_conf.router_index+1, router_conf.pid, proxy_connection.getsockname()[1], str(router_conf.ip_address)))
     proxy_handler = functools.partial(handle_proxy_connection, router_config=router_conf)
 
     router_selector.register(proxy_connection, selectors.EVENT_READ | selectors.EVENT_WRITE, proxy_handler)
@@ -65,7 +65,7 @@ def handle_proxy_connection(proxy_connection, mask, router_config=None):
 
     if mask & selectors.EVENT_READ:
         data, address = proxy_connection.recvfrom(router_config.buffer_size)
-        echo_message = csci551fg.icmp.ICMPEcho(data)
+        echo_message = csci551fg.ipfg.ICMPEcho(data)
         router_logger.info("ICMP from port: %s, src: %s, dst: %s, type: %s",
           address[1], echo_message.source_ipv4, echo_message.destination_ipv4,
           echo_message.icmp_type)
@@ -93,7 +93,7 @@ def handle_proxy_connection(proxy_connection, mask, router_config=None):
 def handle_external_connection(external_connection, mask, router_config=None):
     if mask & selectors.EVENT_READ:
         data, address = external_connection.recvfrom(router_config.buffer_size)
-        echo_message = csci551fg.icmp.ICMPEcho(data)
+        echo_message = csci551fg.ipfg.ICMPEcho(data)
 
         router_logger.debug("received message on external interface %s" % echo_message)
 

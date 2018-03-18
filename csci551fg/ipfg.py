@@ -39,13 +39,13 @@ def ip_icmp_checksum(data):
 
     # Add carry bits
     checksum += (checksum >> 16)
-    
+
     # Ones compliment and mask to the correct size
     checksum = (~checksum) & 0xffff
 
     return struct.pack("!H", checksum)
 
-class ICMPEcho(object):
+class IPv4Packet(object):
 
     def __init__(self, packet_data):
 
@@ -62,6 +62,33 @@ class ICMPEcho(object):
         self.ip_checksum = packet_data[10:12]
         self.source_ipv4 = ipaddress.IPv4Address(packet_data[12:16])
         self.destination_ipv4 = ipaddress.IPv4Address(packet_data[16:20])
+
+    def set_source(self, source_ipv4):
+
+        new_packet = bytearray(len(self.packet_data))
+        new_packet[:] = self.packet_data
+
+        new_packet[12:16] = source_ipv4.packed
+
+        new_packet[10:12] = [0,0]
+        new_packet[10:12] = ip_icmp_checksum(new_packet[0:20])
+        return self.__class__(bytes(new_packet))
+
+    def set_destination(self, destination_ipv4):
+
+        new_packet = bytearray(len(self.packet_data))
+        new_packet[:] = self.packet_data
+
+        new_packet[16:20] = destination_ipv4.packed
+
+        new_packet[10:12] = [0,0]
+        new_packet[10:12] = ip_icmp_checksum(new_packet[0:20])
+        return self.__class__(bytes(new_packet))
+
+class ICMPEcho(IPv4Packet):
+
+    def __init__(self, packet_data):
+        super().__init__(packet_data)
 
         # ICMP fields
         self.icmp_type = packet_data[20]
@@ -82,29 +109,6 @@ class ICMPEcho(object):
         icmp = "ICMP: <type={}, code={}, checksum={}, identifier={}, sequence_number={}>".format(
              self.icmp_type, self.icmp_code, self.checksum.hex(), self.identifier.hex(), self.sequence_number.hex())
         return "{}\n{}".format(ip,icmp)
-
-    def set_source(self, source_ipv4):
-
-        new_packet = bytearray(len(self.packet_data))
-        new_packet[:] = self.packet_data
-
-        new_packet[12:16] = source_ipv4.packed
-
-        new_packet[10:12] = [0,0]
-        new_packet[10:12] = ip_icmp_checksum(new_packet[0:20])
-        return ICMPEcho(bytes(new_packet))
-
-    def set_destination(self, destination_ipv4):
-
-        new_packet = bytearray(len(self.packet_data))
-        new_packet[:] = self.packet_data
-
-        new_packet[16:20] = destination_ipv4.packed
-
-        new_packet[10:12] = [0,0]
-        new_packet[10:12] = ip_icmp_checksum(new_packet[0:20])
-        return ICMPEcho(bytes(new_packet))
-
 
     def reply(self):
         reply_data = bytearray(len(self.packet_data))
@@ -129,3 +133,23 @@ class ICMPEcho(object):
         reply_data[22:24] = ip_icmp_checksum(reply_data)
 
         return ICMPEcho(bytes(reply_data))
+
+class MCMPacket(IPv4Packet):
+
+    def __init__(self, packet_data):
+        new_packet = bytearray(len(self.packet_data))
+        new_packet[:] = self.packet_data
+
+        # Zero out entire IP header
+        new_packet[0:20] = [0 for i in range(0,20)]
+
+        # Experimental protocol
+        new_packet[9] = 253
+
+        # Set source and destination
+        new_packet[12:16] = ipaddress.IPv4Address('127.0.0.1').packed
+        new_packet[16:20] = ipaddress.IPv4Address('127.0.0.1').packed
+        super().__init__(new_packet)
+
+        self.message_type = self.packet_data[20]
+        self.circuit_id = self.packet_data[21:23]
