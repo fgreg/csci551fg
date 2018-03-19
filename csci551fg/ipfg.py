@@ -48,7 +48,6 @@ def ip_icmp_checksum(data):
 class IPv4Packet(object):
 
     def __init__(self, packet_data):
-
         self.packet_data = packet_data
 
         #IP fields
@@ -137,8 +136,8 @@ class ICMPEcho(IPv4Packet):
 class MCMPacket(IPv4Packet):
 
     def __init__(self, packet_data):
-        new_packet = bytearray(len(self.packet_data))
-        new_packet[:] = self.packet_data
+        new_packet = bytearray(len(packet_data))
+        new_packet[:] = packet_data
 
         # Zero out entire IP header
         new_packet[0:20] = [0 for i in range(0,20)]
@@ -149,7 +148,43 @@ class MCMPacket(IPv4Packet):
         # Set source and destination
         new_packet[12:16] = ipaddress.IPv4Address('127.0.0.1').packed
         new_packet[16:20] = ipaddress.IPv4Address('127.0.0.1').packed
-        super().__init__(new_packet)
+        super().__init__(bytes(new_packet))
 
         self.message_type = self.packet_data[20]
         self.circuit_id = self.packet_data[21:23]
+
+    def set_message_type(self, message_type):
+        new_data = bytearray(len(self.packet_data))
+        new_data[:] = self.packet_data
+
+        new_data[20] = struct.pack("!B",message_type)
+
+        return self.__class__(new_data)
+
+    def set_circuit_id(self, circuit_id):
+        new_data = bytearray(len(self.packet_data))
+        new_data[:] = self.packet_data
+
+        new_data[21:23] = struct.pack("!H",circuit_id)
+
+        return self.__class__(new_data)
+
+class CircuitExtend(MCMPacket):
+
+    def __init__(self, packet_data):
+        new_packet = bytearray(len(packet_data))
+        new_packet[:] = packet_data
+
+        new_packet[20] = 0x52
+
+        super().__init__(bytes(new_packet))
+
+        self.next_hop = self.packet_data[23:25]
+
+    def set_next_hop(self, next_hop):
+        new_data = bytearray(len(self.packet_data))
+        new_data[:] = self.packet_data
+
+        new_data[23:25] = struct.pack("!H",next_hop)
+
+        return self.__class__(new_data)

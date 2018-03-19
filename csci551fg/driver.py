@@ -58,7 +58,7 @@ def main():
 
     # Setup log for proxy then open the UDP port for routers
     csci551fg.proxy.setup_log(stage)
-    proxy_address = csci551fg.proxy.bind_router_socket(stage=stage)
+    proxy_address = csci551fg.proxy.bind_router_socket(stage=stage, num_hops=minitor_hops)
 
     routers = []
     child = False
