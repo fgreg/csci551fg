@@ -13,6 +13,9 @@ import selectors
 import functools
 import ipaddress
 import struct
+from collections import namedtuple
+
+CircuitEntry = namedtuple('CircuitEntry', ('id_i', 'id_o', 'prev_hop', 'next_hop'))
 
 router_logger = logging.getLogger('csci551fg.router')
 
@@ -21,9 +24,11 @@ router_selector = selectors.DefaultSelector()
 # Queue for messages waiting to be sent out the external interfaces
 _outgoing_external = []
 
-# Queue for messages returning to the proxy
-_incoming_proxy = []
+# Queue for messages being written by the UDP socket
+_outgoing_udp = []
 
+# List of known circuits
+_circuit_list = []
 
 def setup_log(stage, router_index):
     router_handler = logging.FileHandler(os.path.join(os.curdir, "stage%d.router%d.out" % (stage, router_index+1)), mode='w')
@@ -37,14 +42,14 @@ def router(router_conf):
 
     router_logger.debug("router args %s" % router_conf._asdict())
 
-    # Setup the connection to the proxy
-    proxy_connection = socket.socket(family=socket.AF_INET, type=socket.SOCK_DGRAM)
-    proxy_connection.connect(router_conf.proxy_address)
-    proxy_connection.sendall(struct.pack("!2I", router_conf.pid, int(ipaddress.IPv4Address(router_conf.ip_address))))
-    router_logger.info("router: %d, pid: %d, port: %d, IP: %s" % (router_conf.router_index+1, router_conf.pid, proxy_connection.getsockname()[1], str(router_conf.ip_address)))
-    proxy_handler = functools.partial(handle_proxy_connection, router_config=router_conf)
+    # Open a UDP Port
+    udp_connection = socket.socket(family=socket.AF_INET, type=socket.SOCK_DGRAM)
+    udp_connection.bind((socket.gethostbyname(socket.gethostname()), 0))
+    udp_connection.sendto(struct.pack("!2I", router_conf.pid, int(ipaddress.IPv4Address(router_conf.ip_address))), router_conf.proxy_address)
+    router_logger.info("router: %d, pid: %d, port: %d" % (router_conf.router_index+1, router_conf.pid, udp_connection.getsockname()[1]))
+    udp_handler = functools.partial(handle_udp_connection, router_config=router_conf)
 
-    router_selector.register(proxy_connection, selectors.EVENT_READ | selectors.EVENT_WRITE, proxy_handler)
+    router_selector.register(udp_connection, selectors.EVENT_READ | selectors.EVENT_WRITE, udp_handler)
 
     # Setup the connection to the external interface_name
     external_socket = socket.socket(family=socket.AF_INET, type=socket.SOCK_RAW, proto=socket.IPPROTO_ICMP)
@@ -61,34 +66,99 @@ def router(router_conf):
             func = key.data
             func(key.fileobj, mask)
 
-def handle_proxy_connection(proxy_connection, mask, router_config=None):
+def handle_udp_connection(udp_connection, mask, router_config=None):
 
     if mask & selectors.EVENT_READ:
-        data, address = proxy_connection.recvfrom(router_config.buffer_size)
-        echo_message = csci551fg.ipfg.ICMPEcho(data)
-        router_logger.info("ICMP from port: %s, src: %s, dst: %s, type: %s",
-          address[1], echo_message.source_ipv4, echo_message.destination_ipv4,
-          echo_message.icmp_type)
+        data, address = udp_connection.recvfrom(router_config.buffer_size)
 
-        # If the echo is addressed to this router or to the router subnet, reply
-        # directly back to the proxy
-        if echo_message.destination_ipv4 == router_config.ip_address \
-           or echo_message.destination_ipv4 in router_config.router_subnet:
-            reply = echo_message.reply()
-            router_logger.debug("Router replying with data\n%s" % (reply.packet_data))
-
-            proxy_connection.sendto(reply.packet_data, address)
-        # Otherwise, send it out the external interface
+        message = csci551fg.ipfg.IPv4Packet(data)
+        (ip_proto,) = struct.unpack("!B", message.protocol)
+        if ip_proto == socket.IPPROTO_ICMP:
+            message_handler = _handle_echo
+        elif ip_proto == csci551fg.ipfg.IPPROTO_MINITOR:
+            message_handler = _handle_minitor
         else:
-            outgoing = echo_message.set_source(router_config.ip_address)
-            router_logger.debug("Incoming source %s, Outgoing source %s" % (echo_message.source_ipv4, outgoing.source_ipv4))
-            _outgoing_external.append(outgoing)
+            raise Exception("Could not determine message type in router. IP Protocol: %s, Message: %s" % (ip_proto, message))
+
+        message_handler(data, address, router_config, udp_connection)
+
     elif mask & selectors.EVENT_WRITE:
-        if _incoming_proxy:
-            echo_message = _incoming_proxy.pop()
+        if _outgoing_udp:
+            (message, address) = _outgoing_udp.pop()
 
-            proxy_connection.sendto(echo_message.packet_data, router_config.proxy_address)
+            udp_connection.sendto(message.packet_data, address)
 
+def _handle_echo(data, address, router_config, udp_connection):
+    echo_message = csci551fg.ipfg.ICMPEcho(data)
+    router_logger.info("ICMP from port: %s, src: %s, dst: %s, type: %s",
+      address[1], echo_message.source_ipv4, echo_message.destination_ipv4,
+      echo_message.icmp_type)
+
+    # If the echo is addressed to this router or to the router subnet, reply
+    # directly back to the proxy
+    if echo_message.destination_ipv4 == router_config.ip_address \
+       or echo_message.destination_ipv4 in router_config.router_subnet:
+        reply = echo_message.reply()
+        router_logger.debug("Router replying with data\n%s" % (reply.packet_data))
+
+        udp_connection.sendto(reply.packet_data, address)
+    # Otherwise, send it out the external interface
+    else:
+        outgoing = echo_message.set_source(router_config.ip_address)
+        router_logger.debug("Incoming source %s, Outgoing source %s" % (echo_message.source_ipv4, outgoing.source_ipv4))
+        _outgoing_external.append(outgoing)
+
+def _handle_minitor(data, address, router_config, udp_connection):
+
+    mcm_message = csci551fg.ipfg.MCMPacket(data)
+    (mcm_type,) = struct.unpack("!B", mcm_message.message_type)
+    if mcm_type == csci551fg.ipfg.MCM_CE:
+        mcm_ce = csci551fg.ipfg.CircuitExtend(data)
+        router_logger.debug("from %s, circuit extend %s" % (address, mcm_ce))
+        (id_i,) = struct.unpack("!H", mcm_ce.circuit_id)
+        known_circuit = next(iter([c for c in _circuit_list if c.id_i == id_i]), None)
+        if known_circuit:
+            # Known circuit, forward on
+            ce_forward = mcm_ce.forward(known_circuit.next_hop)
+            ce_forward = ce_forward.set_circuit_id(known_circuit.id_o)
+
+            router_logger.info("forwarding extend circuit: incoming: %s, outgoing: %s at %s"
+                % (hex(known_circuit.id_i), hex(known_circuit.id_o), known_circuit.next_hop))
+
+            _outgoing_udp.append((ce_forward, ('127.0.0.1', known_circuit.next_hop)))
+
+        else:
+            # New circuit
+            id_o = (router_config.router_index + 1) * 256 + (len(_circuit_list) + 1)
+            (next_hop,) = struct.unpack("!H", mcm_ce.next_hop)
+            _circuit_list.append(CircuitEntry(id_i, id_o, address[1], next_hop))
+            router_logger.info("new extend circuit: incoming: %s, outgoing %s at %s" % (hex(id_i), hex(id_o), next_hop))
+
+            ced = mcm_ce.reply()
+
+            _outgoing_udp.append((ced, address))
+    elif mcm_type == csci551fg.ipfg.MCM_CED:
+        mcm_ced = csci551fg.ipfg.CircuitExtendDone(data)
+        (id_i,) = struct.unpack("!H", mcm_ced.circuit_id)
+
+        router_logger.debug(id_i)
+        router_logger.debug(_circuit_list)
+
+        known_circuit = next(iter([c for c in _circuit_list if c.id_o == id_i]), None)
+        if known_circuit:
+            # Reverse-Forward circuit extend done Messages
+            mcm_ced = mcm_ced.set_circuit_id(known_circuit.id_i)
+
+            router_logger.info("forwarding extend-done circuit: incoming: %s, outgoing: %s at %s"
+                % (hex(id_i), hex(known_circuit.id_i), known_circuit.prev_hop))
+        else:
+            known_circuit = next(iter([c for c in _circuit_list if c.id_i == id_i]), None)
+
+        _outgoing_udp.append((mcm_ced, ('127.0.0.1', known_circuit.prev_hop)))
+
+
+    else:
+        raise Exception("Unkown MCM message. Type %s, Message %s" % (mcm_type, mcm_message))
 
 def handle_external_connection(external_connection, mask, router_config=None):
     if mask & selectors.EVENT_READ:
@@ -106,7 +176,7 @@ def handle_external_connection(external_connection, mask, router_config=None):
 
             router_logger.debug("incoming message on external interface before\n%s\nafter\n%s" % (echo_message, incoming))
 
-            _incoming_proxy.append(incoming)
+            _outgoing_udp.append((incoming, router_config.proxy_address))
 
     elif mask & selectors.EVENT_WRITE:
         if _outgoing_external:

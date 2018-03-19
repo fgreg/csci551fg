@@ -54,7 +54,7 @@ def main():
     conf_file = sys.argv[1]
     parse_config(conf_file)
 
-    log.debug("num_routers: %d, stage: %d, minitor_hops: %d" % (num_routers, stage, minitor_hops))
+    log.debug("num_routers: %d, stage: %d, minitor_hops: %s" % (num_routers, stage, minitor_hops if minitor_hops else "N/A"))
 
     # Setup log for proxy then open the UDP port for routers
     csci551fg.proxy.setup_log(stage)

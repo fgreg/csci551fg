@@ -20,7 +20,7 @@ import csci551fg.ipfg
 from csci551fg.driver import UDP_BUFFER_SIZE, TUNNEL_BUFFER_SIZE
 from collections import namedtuple
 
-Circuit = namedtuple('Circuit', ['circuit_id', 'first_hop', 'hops'])
+Circuit = namedtuple('Circuit', ['circuit_id', 'first_hop', 'hops', 'extending'])
 
 the_circuit = None
 
@@ -32,6 +32,8 @@ routers = []
 _echo_messages = []
 # Holding queue for messages waiting to go to the tunnel
 _echo_replies = []
+
+_proxy_out_udp = []
 
 def setup_log(stage):
     proxy_handler = logging.FileHandler(os.path.join(os.curdir, "stage%d.proxy.out" % stage), mode='w')
@@ -77,40 +79,41 @@ def handle_udp_socket(udp_socket, mask, stage=None, num_hops=None):
 
             proxy_logger.debug("updated routers %s" % routers)
         else:
-            echo_message = csci551fg.ipfg.ICMPEcho(data)
-            proxy_logger.info("ICMP from port: %s, src: %s, dst: %s, type: %s",
-              address[1], echo_message.source_ipv4,
-              echo_message.destination_ipv4, echo_message.icmp_type)
 
-            _echo_replies.append(echo_message)
+            message = csci551fg.ipfg.IPv4Packet(data)
+            (ip_proto,) = struct.unpack("!B", message.protocol)
+            if ip_proto == socket.IPPROTO_ICMP:
+                message_handler = _handle_echo
+            elif ip_proto == csci551fg.ipfg.IPPROTO_MINITOR:
+                message_handler = _handle_minitor
+            else:
+                raise Exception("Could not determine message type in router. IP Protocol: %s, Message: %s" % (ip_proto, message))
+
+            message_handler(data, address)
 
     if mask & selectors.EVENT_WRITE:
-        if all(router["address"] is not None for router in routers) and _echo_messages:
-            if stage <=4:
+        global the_circuit
+        if all(router["address"] is not None for router in routers):
+            if stage <=4 and _echo_messages:
+                message = _echo_messages.pop()
+                router_address = _route_message(message)
+            elif not the_circuit:
+                # Need to establish new circuit
+                (message, router_address) = _build_circuit(stage, num_hops)
+            elif the_circuit.hops and not the_circuit.extending:
+                # Need to extend circuit
+                (message, router_address) = _extend_circuit(stage, num_hops)
+            elif not the_circuit.hops and _echo_messages:
+                # Need to relay data
                 message = _echo_messages.pop()
                 router_address = _route_message(message)
             else:
-                global the_circuit
-                # Check if we've built the circuit yet
-                if not the_circuit:
-                    # Establish circuit
-                    hops = random.sample(routers, num_hops)
-                    the_circuit = Circuit(1, hops[0], hops)
-                    proxy_logger.debug("new circuit %s" % (the_circuit,))
+                return
 
-                # Check if the circuit is complete by seeing if we need to make any more hops
-                if not the_circuit.hops:
-                    # Circuit complete, Send data
-                    message = _echo_messages.pop()
-                else:
-                    # Circuit incomplete, Extend circuit
-                    message = csci551fg.ipfg.CircuitExtend(bytearray(25))
-                    message = message.set_circuit_id(the_circuit.circuit_id)
-                    message = message.set_next_hop(the_circuit.hops[0]['address'][1])
-                    proxy_logger.info("hop: %d, router: %s" % (num_hops - len(the_circuit.hops) + 1, the_circuit.hops[0]['index']))
+            _proxy_out_udp.append((message, router_address))
 
-                router_address = the_circuit.first_hop['address']
-
+        if _proxy_out_udp:
+            (message, router_address) = _proxy_out_udp.pop()
             udp_socket.sendto(message.packet_data, router_address)
 
 def _route_message(message):
@@ -119,6 +122,56 @@ def _route_message(message):
     target_router = next((r for r in routers if r["ipv4_address"] == destination), routers[int(destination) % len(routers)])
 
     return target_router['address']
+
+def _build_circuit(stage, num_hops):
+    global the_circuit
+    # Establish circuit
+    hops = random.sample(routers, num_hops)
+    the_circuit = Circuit(1, hops[0], hops, False)
+    proxy_logger.debug("new circuit %s" % (the_circuit,))
+
+    return _extend_circuit(stage, num_hops)
+
+def _extend_circuit(stage, num_hops):
+    global the_circuit
+    # Circuit incomplete, Extend circuit
+    the_circuit = Circuit(the_circuit.circuit_id, the_circuit.first_hop, the_circuit.hops, True)
+    message = csci551fg.ipfg.CircuitExtend(bytearray(25))
+    message = message.set_circuit_id(the_circuit.circuit_id)
+    try:
+        next_hop = the_circuit.hops[1]
+        message = message.set_next_hop(next_hop['address'][1])
+    except IndexError:
+        next_hop = {'address': (None, csci551fg.ipfg.LAST_HOP)}
+    message = message.set_next_hop(next_hop['address'][1])
+    hop_num = num_hops - len(the_circuit.hops) + 1
+    router_num = the_circuit.hops[0]['index']+1
+    proxy_logger.info("hop: %d, router: %s" % (hop_num, router_num))
+
+    router_address = the_circuit.first_hop['address']
+
+    return message, router_address
+
+def _handle_echo(data, address):
+    echo_message = csci551fg.ipfg.ICMPEcho(data)
+    proxy_logger.info("ICMP from port: %s, src: %s, dst: %s, type: %s",
+      address[1], echo_message.source_ipv4,
+      echo_message.destination_ipv4, echo_message.icmp_type)
+
+    _echo_replies.append(echo_message)
+
+def _handle_minitor(data, address):
+    mcm_message = csci551fg.ipfg.MCMPacket(data)
+    (mcm_type,) = struct.unpack("!B", mcm_message.message_type)
+    if mcm_type == csci551fg.ipfg.MCM_CED:
+        mcm_ced = csci551fg.ipfg.CircuitExtendDone(data)
+        (id_i,) = struct.unpack("!H", mcm_ced.circuit_id)
+        global the_circuit
+        the_circuit = Circuit(the_circuit.circuit_id, the_circuit.first_hop, the_circuit.hops[1:], False)
+        proxy_logger.debug("popped hop: %s" % (the_circuit,))
+        proxy_logger.info("incoming extend-done circuit, incoming: %s from port: %d" % (hex(id_i), address[1]))
+    else:
+        raise Exception("Unkown MCM message. Type %s, Message %s" % (mcm_type, mcm_message))
 
 def handle_tunnel(tunnel, mask):
     if mask & selectors.EVENT_READ:
