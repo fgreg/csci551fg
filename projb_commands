@@ -23,3 +23,8 @@ ping -c 1 -I $IP_OF_ETH0 128.30.2.30; ping -c 2 -I $IP_OF_ETH0 128.30.2.31; ping
 
 
 sudo ip route add table 9 to 34.244.206.183 dev tun1
+
+
+
+
+kill $(ps aux | grep '[p]ython3 csci551fg/driver.py' | awk '{print $2}')

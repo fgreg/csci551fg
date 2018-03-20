@@ -18,6 +18,7 @@ import csci551fg.router
 # Global vars used to keep track of configuration
 num_routers = 0
 stage = 1
+minitor_hops = 1
 
 # External interfaces available for assignment to routers
 INTERFACES = [
@@ -53,11 +54,11 @@ def main():
     conf_file = sys.argv[1]
     parse_config(conf_file)
 
-    log.debug("num_routers: %d" % num_routers)
+    log.debug("num_routers: %d, stage: %d, minitor_hops: %s" % (num_routers, stage, minitor_hops if minitor_hops else "N/A"))
 
     # Setup log for proxy then open the UDP port for routers
     csci551fg.proxy.setup_log(stage)
-    proxy_address = csci551fg.proxy.bind_router_socket(stage=stage)
+    proxy_address = csci551fg.proxy.bind_router_socket(stage=stage, num_hops=minitor_hops)
 
     routers = []
     child = False
@@ -99,9 +100,17 @@ def parse_config(conf_file):
                 config.append(line)
 
     global stage
-    stage = int(config[0].split(' ')[-1])
+    stage = next(iter([l for l in config if "stage" in l]), None)
+    if stage:
+        stage = int(stage.split(' ')[-1])
     global num_routers
-    num_routers = int(config[1].split(' ')[-1])
+    num_routers = next(iter([l for l in config if "num_routers" in l]), None)
+    if num_routers:
+        num_routers = int(num_routers.split(' ')[-1])
+    global minitor_hops
+    minitor_hops = next(iter([l for l in config if "minitor_hops" in l]), None)
+    if minitor_hops:
+        minitor_hops = int(minitor_hops.split(' ')[-1])
 
 # Called when module is run
 if __name__ == '__main__':

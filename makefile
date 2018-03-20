@@ -1,7 +1,7 @@
 # Copyright 2018, Frank Greguska, All rights reserved.
 
 default:
-	python3 setup.py install
+	python3 setup.py install --user
 	touch proja
 	chmod +x proja
 	@echo "#!/bin/bash" > proja
