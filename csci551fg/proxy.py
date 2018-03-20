@@ -102,20 +102,23 @@ def handle_udp_socket(udp_socket, mask, stage=None, num_hops=None):
             if stage <= 4 and _echo_messages:
                 message = _echo_messages.pop()
                 router_address = _route_message(message)
-            elif not the_circuit:
-                # Need to establish new circuit
-                (message, router_address) = _build_circuit(stage, num_hops)
-            elif the_circuit.hops and not the_circuit.extending:
-                # Need to extend circuit
-                (message, router_address) = _extend_circuit(stage, num_hops)
-            elif not the_circuit.hops and _echo_messages:
-                # Need to relay data
-                message = _echo_messages.pop()
-                mcm_rd = csci551fg.ipfg.RelayData(bytes(23))
-                mcm_rd = mcm_rd.set_circuit_id(the_circuit.circuit_id)
-                message = mcm_rd.set_contents(message.packet_data)
-                router_address = the_circuit.first_hop['address']
-                proxy_logger.debug("relaying packet {} to {}".format(mcm_rd, router_address))
+            elif stage > 4:
+                if not the_circuit:
+                    # Need to establish new circuit
+                    (message, router_address) = _build_circuit(stage, num_hops)
+                elif the_circuit.hops and not the_circuit.extending:
+                    # Need to extend circuit
+                    (message, router_address) = _extend_circuit(stage, num_hops)
+                elif not the_circuit.hops and _echo_messages:
+                    # Need to relay data
+                    message = _echo_messages.pop()
+                    mcm_rd = csci551fg.ipfg.RelayData(bytes(23))
+                    mcm_rd = mcm_rd.set_circuit_id(the_circuit.circuit_id)
+                    message = mcm_rd.set_contents(message.packet_data)
+                    router_address = the_circuit.first_hop['address']
+                    proxy_logger.debug("relaying packet {} to {}".format(message, router_address))
+                else:
+                    return
             else:
                 return
 
@@ -127,9 +130,14 @@ def handle_udp_socket(udp_socket, mask, stage=None, num_hops=None):
 
 
 def _route_message(message):
+    global routers
     destination = message.destination_ipv4
-    target_router = next((r for r in routers if r["ipv4_address"] == destination),
-                         routers[int(destination) % len(routers)])
+    try:
+        target_router = next((r for r in routers if r["ipv4_address"] == destination),
+                             routers[int(destination) % len(routers)])
+    except KeyError:
+        target_router = routers[0]
+        routers = routers[-1:] + routers[:-1]
 
     return target_router['address']
 
@@ -169,7 +177,7 @@ def _handle_echo(data, address):
     echo_message = csci551fg.ipfg.ICMPEcho(data)
     proxy_logger.info("ICMP from port: %s, src: %s, dst: %s, type: %s",
                       address[1], echo_message.source_ipv4,
-                      echo_message.destination_ipv4, echo_message.icmp_type)
+                      echo_message.destination_ipv4, echo_message.icmp_type[0])
 
     _echo_replies.append(echo_message)
 
@@ -184,8 +192,16 @@ def _handle_minitor(data, address):
         the_circuit = Circuit(the_circuit.circuit_id, the_circuit.first_hop, the_circuit.hops[1:], False)
         proxy_logger.debug("popped hop: %s" % (the_circuit,))
         proxy_logger.info("incoming extend-done circuit, incoming: %s from port: %d" % (hex(id_i), address[1]))
+    elif mcm_type == csci551fg.ipfg.MCM_RRD:
+        mcm_rrd = csci551fg.ipfg.RelayReturnData(data)
+        (id_i,) = struct.unpack("!H", mcm_rrd.circuit_id)
+        i_packet = csci551fg.ipfg.IPv4Packet(mcm_rrd.contents)
+        proxy_logger.info("incoming packet, circuit incoming: {}, src: {}, dst: {}".format(
+            hex(id_i), i_packet.source_ipv4, i_packet.destination_ipv4
+        ))
+        _echo_replies.append(i_packet)
     else:
-        raise Exception("Unkown MCM message. Type %s, Message %s" % (mcm_type, mcm_message))
+        raise Exception("Unkown MCM message. Type %s, Message %s" % (hex(mcm_type), mcm_message))
 
 
 def handle_tunnel(tunnel, mask):
@@ -200,7 +216,7 @@ def handle_tunnel(tunnel, mask):
         proxy_logger.debug("Proxy received data from tunnel\n%s" % str(data))
 
         proxy_logger.info("ICMP from tunnel, src: %s, dst: %s, type: %s", echo_message.source_ipv4,
-                          echo_message.destination_ipv4, echo_message.icmp_type)
+                          echo_message.destination_ipv4, struct.unpack("!B", echo_message.icmp_type)[0])
         _echo_messages.append(echo_message)
 
     if mask & selectors.EVENT_WRITE:

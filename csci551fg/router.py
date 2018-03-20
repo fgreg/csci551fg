@@ -77,7 +77,6 @@ def handle_udp_connection(udp_connection, mask, router_config=None):
 
         message = csci551fg.ipfg.IPv4Packet(data)
         (ip_proto,) = struct.unpack("!B", message.protocol)
-        router_logger.debug("message {}, ip_proto {}".format(message, ip_proto))
         if ip_proto == socket.IPPROTO_ICMP:
             message_handler = _handle_echo
         elif ip_proto == csci551fg.ipfg.IPPROTO_MINITOR:
@@ -103,7 +102,7 @@ def _handle_echo(data, address, router_config, udp_connection):
     if router_config.stage <= 4:
         router_logger.info("ICMP from port: %s, src: %s, dst: %s, type: %s",
                            address[1], echo_message.source_ipv4, echo_message.destination_ipv4,
-                           echo_message.icmp_type)
+                           echo_message.icmp_type[0])
 
     # If the echo is addressed to this router or to the router subnet, reply
     # directly back to the proxy
@@ -129,6 +128,8 @@ def _handle_minitor(data, address, router_config, udp_connection):
         _handle_circuit_extend_done(data, address, router_config, udp_connection)
     elif mcm_type == csci551fg.ipfg.MCM_RD:
         _handle_relay_data(data, address, router_config, udp_connection)
+    elif mcm_type == csci551fg.ipfg.MCM_RRD:
+        _handle_relay_reply_data(data, address, router_config, udp_connection)
     else:
         raise Exception("Unkown MCM message. Type %s, Message %s" % (mcm_type, mcm_message))
 
@@ -205,6 +206,29 @@ def _handle_relay_data(data, address, router_config, udp_connection):
                            % (hex(id_i), packet.source_ipv4, packet.destination_ipv4))
 
 
+def _handle_relay_reply_data(data, address, router_config, udp_connection):
+    mcm_rrd = csci551fg.ipfg.RelayReturnData(data)
+    (id_i,) = struct.unpack("!H", mcm_rrd.circuit_id)
+    known_circuit = next(iter([c for c in _circuit_list if c.id_o == id_i]), None)
+    if known_circuit:
+        # Reverse-Forward relay reply Messages
+        mcm_rrd = mcm_rrd.set_circuit_id(known_circuit.id_i)
+    else:
+        known_circuit = next(iter([c for c in _circuit_list if c.id_i == id_i]), None)
+        mcm_rrd = mcm_rrd.set_circuit_id(known_circuit.id_i)
+
+    i_packet = csci551fg.ipfg.IPv4Packet(mcm_rrd.contents)
+    o_packet = i_packet.set_destination(ipaddress.IPv4Address('10.0.2.15'))
+    mcm_rrd = mcm_rrd.set_contents(o_packet.packet_data)
+    router_logger.info(
+        "relay reply packet, circuit incoming: {}, outgoing: {}, src: {}, incoming dst: {}, outgoing dst: {}".format(
+            hex(id_i), hex(known_circuit.id_i), i_packet.source_ipv4, i_packet.destination_ipv4,
+            o_packet.destination_ipv4
+        ))
+
+    _outgoing_udp.append((mcm_rrd, ('127.0.0.1', known_circuit.prev_hop)))
+
+
 def handle_external_connection(external_connection, mask, router_config=None):
     if mask & selectors.EVENT_READ:
         data, address = external_connection.recvfrom(router_config.buffer_size)
@@ -216,11 +240,21 @@ def handle_external_connection(external_connection, mask, router_config=None):
         if echo_message.destination_ipv4 == router_config.ip_address:
             if router_config.stage <= 4:
                 router_logger.info("ICMP from raw sock, src: %s, dst: %s, type: %s",
-                                   echo_message.source_ipv4, echo_message.destination_ipv4, echo_message.icmp_type)
+                                   echo_message.source_ipv4, echo_message.destination_ipv4, echo_message.icmp_type[0])
 
-            incoming = echo_message.set_destination(ipaddress.IPv4Address('10.0.2.15'))
+                incoming = echo_message.set_destination(ipaddress.IPv4Address('10.0.2.15'))
 
-            _outgoing_udp.append((incoming, router_config.proxy_address))
+                _outgoing_udp.append((incoming, router_config.proxy_address))
+            else:
+                return_circuit = _circuit_list[0]
+                router_logger.info("incoming packet, src: {}, dst: {}, outgoing circuit: {}".format(
+                    echo_message.source_ipv4, echo_message.destination_ipv4, hex(return_circuit.id_i)
+                ))
+                rrd = csci551fg.ipfg.RelayReturnData(bytes(23 + len(echo_message.packet_data)))
+                rrd = rrd.set_contents(echo_message.packet_data)
+                rrd = rrd.set_circuit_id(return_circuit.id_i)
+                router_logger.debug("rrd {} prev_hop {}".format(rrd, ('127.0.0.1', return_circuit.prev_hop)))
+                _outgoing_udp.append((rrd, ('127.0.0.1', return_circuit.prev_hop)))
 
     elif mask & selectors.EVENT_WRITE:
         if _outgoing_external:
