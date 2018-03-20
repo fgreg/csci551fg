@@ -5,20 +5,19 @@ This module is responsible for handling the proxy. It logs to the appropriate fi
 and read/write to both the UDP socket and the Tunnel pipes. Messages are stored
 in memory while they are waiting to be written to one of the pipes.
 """
-import logging
-import sys
-import os
-import socket
-import selectors
-import ipaddress
-import struct
 import functools
+import ipaddress
+import logging
+import os
 import random
-import csci551fg.tunnel
-import csci551fg.ipfg
-
-from csci551fg.driver import UDP_BUFFER_SIZE, TUNNEL_BUFFER_SIZE
+import selectors
+import socket
+import struct
 from collections import namedtuple
+
+import csci551fg.ipfg
+import csci551fg.tunnel
+from csci551fg.driver import UDP_BUFFER_SIZE, TUNNEL_BUFFER_SIZE
 
 Circuit = namedtuple('Circuit', ['circuit_id', 'first_hop', 'hops', 'extending'])
 
@@ -35,6 +34,7 @@ _echo_replies = []
 
 _proxy_out_udp = []
 
+
 def setup_log(stage):
     proxy_handler = logging.FileHandler(os.path.join(os.curdir, "stage%d.proxy.out" % stage), mode='w')
     proxy_handler.setFormatter(logging.Formatter("%(message)s"))
@@ -42,6 +42,7 @@ def setup_log(stage):
 
     proxy_logger.addHandler(proxy_handler)
     proxy_logger.setLevel(logging.DEBUG)
+
 
 def bind_router_socket(stage=None, num_hops=None):
     my_socket = socket.socket(family=socket.AF_INET, type=socket.SOCK_DGRAM)
@@ -55,6 +56,7 @@ def bind_router_socket(stage=None, num_hops=None):
     proxy_logger.info("proxy port: %d" % my_socket.getsockname()[1])
 
     return my_socket.getsockname()
+
 
 def handle_udp_socket(udp_socket, mask, stage=None, num_hops=None):
     global routers
@@ -72,10 +74,10 @@ def handle_udp_socket(udp_socket, mask, stage=None, num_hops=None):
 
             if stage >= 5:
                 proxy_logger.info("router: %d, pid: %d, port: %d, IP: %s" \
-                    % (router['index']+1, received_pid, address[1], router["ipv4_address"]))
+                                  % (router['index'] + 1, received_pid, address[1], router["ipv4_address"]))
             else:
                 proxy_logger.info("router: %d, pid: %d, port: %d" \
-                    % (router['index']+1, received_pid, address[1]))
+                                  % (router['index'] + 1, received_pid, address[1]))
 
             proxy_logger.debug("updated routers %s" % routers)
         else:
@@ -85,16 +87,19 @@ def handle_udp_socket(udp_socket, mask, stage=None, num_hops=None):
             if ip_proto == socket.IPPROTO_ICMP:
                 message_handler = _handle_echo
             elif ip_proto == csci551fg.ipfg.IPPROTO_MINITOR:
+                proxy_logger.info("pkt from port: %s, length: %s, contents: 0x%s" % (
+                    address[1], len(message.packet_data[20:]), message.packet_data[20:].hex()))
                 message_handler = _handle_minitor
             else:
-                raise Exception("Could not determine message type in router. IP Protocol: %s, Message: %s" % (ip_proto, message))
+                raise Exception(
+                    "Could not determine message type in router. IP Protocol: %s, Message: %s" % (ip_proto, message))
 
             message_handler(data, address)
 
     if mask & selectors.EVENT_WRITE:
         global the_circuit
         if all(router["address"] is not None for router in routers):
-            if stage <=4 and _echo_messages:
+            if stage <= 4 and _echo_messages:
                 message = _echo_messages.pop()
                 router_address = _route_message(message)
             elif not the_circuit:
@@ -106,7 +111,11 @@ def handle_udp_socket(udp_socket, mask, stage=None, num_hops=None):
             elif not the_circuit.hops and _echo_messages:
                 # Need to relay data
                 message = _echo_messages.pop()
-                router_address = _route_message(message)
+                mcm_rd = csci551fg.ipfg.RelayData(bytes(23))
+                mcm_rd = mcm_rd.set_circuit_id(the_circuit.circuit_id)
+                message = mcm_rd.set_contents(message.packet_data)
+                router_address = the_circuit.first_hop['address']
+                proxy_logger.debug("relaying packet {} to {}".format(mcm_rd, router_address))
             else:
                 return
 
@@ -116,12 +125,14 @@ def handle_udp_socket(udp_socket, mask, stage=None, num_hops=None):
             (message, router_address) = _proxy_out_udp.pop()
             udp_socket.sendto(message.packet_data, router_address)
 
-def _route_message(message):
 
+def _route_message(message):
     destination = message.destination_ipv4
-    target_router = next((r for r in routers if r["ipv4_address"] == destination), routers[int(destination) % len(routers)])
+    target_router = next((r for r in routers if r["ipv4_address"] == destination),
+                         routers[int(destination) % len(routers)])
 
     return target_router['address']
+
 
 def _build_circuit(stage, num_hops):
     global the_circuit
@@ -131,6 +142,7 @@ def _build_circuit(stage, num_hops):
     proxy_logger.debug("new circuit %s" % (the_circuit,))
 
     return _extend_circuit(stage, num_hops)
+
 
 def _extend_circuit(stage, num_hops):
     global the_circuit
@@ -145,20 +157,22 @@ def _extend_circuit(stage, num_hops):
         next_hop = {'address': (None, csci551fg.ipfg.LAST_HOP)}
     message = message.set_next_hop(next_hop['address'][1])
     hop_num = num_hops - len(the_circuit.hops) + 1
-    router_num = the_circuit.hops[0]['index']+1
+    router_num = the_circuit.hops[0]['index'] + 1
     proxy_logger.info("hop: %d, router: %s" % (hop_num, router_num))
 
     router_address = the_circuit.first_hop['address']
 
     return message, router_address
 
+
 def _handle_echo(data, address):
     echo_message = csci551fg.ipfg.ICMPEcho(data)
     proxy_logger.info("ICMP from port: %s, src: %s, dst: %s, type: %s",
-      address[1], echo_message.source_ipv4,
-      echo_message.destination_ipv4, echo_message.icmp_type)
+                      address[1], echo_message.source_ipv4,
+                      echo_message.destination_ipv4, echo_message.icmp_type)
 
     _echo_replies.append(echo_message)
+
 
 def _handle_minitor(data, address):
     mcm_message = csci551fg.ipfg.MCMPacket(data)
@@ -173,24 +187,26 @@ def _handle_minitor(data, address):
     else:
         raise Exception("Unkown MCM message. Type %s, Message %s" % (mcm_type, mcm_message))
 
+
 def handle_tunnel(tunnel, mask):
     if mask & selectors.EVENT_READ:
         data = tunnel.read(TUNNEL_BUFFER_SIZE)
         echo_message = csci551fg.ipfg.ICMPEcho(data)
 
-        if(echo_message.source_ipv4 == ipaddress.IPv4Address('0.0.0.0')):
+        if (echo_message.source_ipv4 == ipaddress.IPv4Address('0.0.0.0')):
             proxy_logger.debug("Dropped 0.0.0.0")
             return
 
         proxy_logger.debug("Proxy received data from tunnel\n%s" % str(data))
 
-        proxy_logger.info("ICMP from tunnel, src: %s, dst: %s, type: %s", echo_message.source_ipv4, echo_message.destination_ipv4, echo_message.icmp_type)
+        proxy_logger.info("ICMP from tunnel, src: %s, dst: %s, type: %s", echo_message.source_ipv4,
+                          echo_message.destination_ipv4, echo_message.icmp_type)
         _echo_messages.append(echo_message)
 
     if mask & selectors.EVENT_WRITE:
         if _echo_replies:
             reply = _echo_replies.pop()
-            num_bytes= tunnel.write(reply.packet_data)
+            num_bytes = tunnel.write(reply.packet_data)
             proxy_logger.debug("wrote %d bytes to tunnel" % num_bytes)
 
 
@@ -202,7 +218,7 @@ def proxy(**kwargs):
         proxy_selector.register(my_tunnel, selectors.EVENT_READ | selectors.EVENT_WRITE, handle_tunnel)
 
     global routers
-    routers = [{"index": i, "pid":r, "address":None} for i, r in enumerate(kwargs['routers'])]
+    routers = [{"index": i, "pid": r, "address": None} for i, r in enumerate(kwargs['routers'])]
     proxy_logger.debug("assigning routers %s" % routers)
 
     while True:

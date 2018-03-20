@@ -5,11 +5,11 @@ This file contains a class responsible for parsing an ICMP echo packet and const
 """
 import ipaddress
 import struct
-import socket
 
 IPPROTO_MINITOR = 253
 MCM_CE = 0x52
 MCM_CED = 0x53
+MCM_RD = 0x51
 
 LAST_HOP = 65535
 
@@ -214,7 +214,7 @@ class CircuitExtend(MCMPacket):
 
     def forward(self, outgoing_circuit_id):
         ced = CircuitExtend(self.packet_data)
-        ced.set_circuit_id(outgoing_circuit_id)
+        ced = ced.set_circuit_id(outgoing_circuit_id)
         return ced
 
 class CircuitExtendDone(MCMPacket):
@@ -231,3 +231,37 @@ class CircuitExtendDone(MCMPacket):
         ip_mcm = super().__repr__()
         ced = "CED: <>"
         return "{}\n{}".format(ip_mcm,ced)
+
+
+class RelayData(MCMPacket):
+
+    def __init__(self, packet_data):
+        new_packet = bytearray(len(packet_data))
+        new_packet[:] = packet_data
+
+        new_packet[20:21] = struct.pack('!B', MCM_RD)
+
+        super().__init__(bytes(new_packet))
+
+        self.contents = self.packet_data[23:]
+
+    def __repr__(self):
+        ip_mcm = super().__repr__()
+        rd = "RD: <contents={}>".format(self.contents.hex())
+        return "{}\n{}".format(ip_mcm, rd)
+
+    def set_contents(self, contents):
+        new_data = bytearray(23 + len(contents))
+        new_data[:] = self.packet_data[0:23]
+
+        new_data[23:] = contents
+
+        return self.__class__(new_data)
+
+    def forward(self, router_ip, outgoing_circuit_id):
+        rd = RelayData(self.packet_data)
+        rd = rd.set_circuit_id(outgoing_circuit_id)
+        packet = IPv4Packet(self.contents)
+        packet = packet.set_source(router_ip)
+        rd = rd.set_contents(packet.packet_data)
+        return rd
