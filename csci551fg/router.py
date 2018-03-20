@@ -15,7 +15,7 @@ from collections import namedtuple
 
 import csci551fg.ipfg
 
-CircuitEntry = namedtuple('CircuitEntry', ('id_i', 'id_o', 'prev_hop', 'next_hop'))
+CircuitEntry = namedtuple('CircuitEntry', ('id_i', 'id_o', 'prev_hop', 'prev_hop_ip', 'next_hop'))
 
 router_logger = logging.getLogger('csci551fg.router')
 
@@ -153,7 +153,7 @@ def _handle_circuit_extend(data, address, router_config, udp_connection):
         # New circuit
         id_o = (router_config.router_index + 1) * 256 + (len(_circuit_list) + 1)
         (next_hop,) = struct.unpack("!H", mcm_ce.next_hop)
-        _circuit_list.append(CircuitEntry(id_i, id_o, address[1], next_hop))
+        _circuit_list.append(CircuitEntry(id_i, id_o, address[1], router_config['ip_address'], next_hop))
         router_logger.info("new extend circuit: incoming: %s, outgoing %s at %s" % (hex(id_i), hex(id_o), next_hop))
 
         ced = mcm_ce.reply()
@@ -213,17 +213,19 @@ def _handle_relay_reply_data(data, address, router_config, udp_connection):
     if known_circuit:
         # Reverse-Forward relay reply Messages
         mcm_rrd = mcm_rrd.set_circuit_id(known_circuit.id_i)
+        new_dest_ip = known_circuit.prev_ip
     else:
         known_circuit = next(iter([c for c in _circuit_list if c.id_i == id_i]), None)
         mcm_rrd = mcm_rrd.set_circuit_id(known_circuit.id_i)
+        new_dest_ip = '10.0.2.15'
 
     i_packet = csci551fg.ipfg.IPv4Packet(mcm_rrd.contents)
-    o_packet = i_packet.set_destination(ipaddress.IPv4Address('10.0.2.15'))
+    o_packet = i_packet.set_destination(ipaddress.IPv4Address(new_dest_ip))
     mcm_rrd = mcm_rrd.set_contents(o_packet.packet_data)
     router_logger.info(
         "relay reply packet, circuit incoming: {}, outgoing: {}, src: {}, incoming dst: {}, outgoing dst: {}".format(
             hex(id_i), hex(known_circuit.id_i), i_packet.source_ipv4, i_packet.destination_ipv4,
-            o_packet.destination_ipv4
+            new_dest_ip
         ))
 
     _outgoing_udp.append((mcm_rrd, ('127.0.0.1', known_circuit.prev_hop)))

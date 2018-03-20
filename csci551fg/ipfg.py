@@ -12,6 +12,8 @@ MCM_CED = 0x53
 MCM_RD = 0x51
 MCM_RRD = 0x54
 
+MCM_FDH = 0x65
+
 LAST_HOP = 65535
 
 
@@ -294,5 +296,30 @@ class RelayReturnData(MCMPacket):
         new_data[:] = self.packet_data[0:23]
 
         new_data[23:] = contents
+
+        return self.__class__(new_data)
+
+
+class FakeDiffieHellman(MCMPacket):
+    def __init__(self, packet_data):
+        new_packet = bytearray(len(packet_data))
+        new_packet[:] = packet_data
+
+        new_packet[20:21] = struct.pack('!B', MCM_FDH)
+
+        super().__init__(bytes(new_packet))
+
+        self.session_key = self.packet_data[23:39]
+
+    def __repr__(self):
+        ip_mcm = super().__repr__()
+        fdh = "FDH: <session_key={}>".format(self.session_key)
+        return "{}\n{}".format(ip_mcm, fdh)
+
+    def set_session_key(self, session_key):
+        new_data = bytearray(39)
+        new_data[:] = self.packet_data[0:23]
+
+        new_data[23:] = struct.pack("!16s", session_key)
 
         return self.__class__(new_data)

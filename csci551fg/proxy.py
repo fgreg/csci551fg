@@ -105,21 +105,18 @@ def handle_udp_socket(udp_socket, mask, stage=None, num_hops=None):
             elif stage > 4:
                 if not the_circuit:
                     # Need to establish new circuit
-                    (message, router_address) = _build_circuit(stage, num_hops)
+                    (message, router_address) = _build_circuit(stage, num_hops, encrypted=stage >= 5)
                 elif the_circuit.hops and not the_circuit.extending:
                     # Need to extend circuit
-                    (message, router_address) = _extend_circuit(stage, num_hops)
+                    (message, router_address) = _extend_circuit(stage, num_hops, encrypted=stage >= 5)
                 elif not the_circuit.hops and _echo_messages:
                     # Need to relay data
-                    message = _echo_messages.pop()
-                    mcm_rd = csci551fg.ipfg.RelayData(bytes(23))
-                    mcm_rd = mcm_rd.set_circuit_id(the_circuit.circuit_id)
-                    message = mcm_rd.set_contents(message.packet_data)
-                    router_address = the_circuit.first_hop['address']
-                    proxy_logger.debug("relaying packet {} to {}".format(message, router_address))
+                    (message, router_address) = _relay_data(stage, num_hops, encrypted=stage >= 5)
                 else:
+                    # Nothing to do
                     return
             else:
+                # Nothing to do
                 return
 
             _proxy_out_udp.append((message, router_address))
@@ -142,17 +139,24 @@ def _route_message(message):
     return target_router['address']
 
 
-def _build_circuit(stage, num_hops):
+def _build_circuit(stage, num_hops, encrypted=False):
     global the_circuit
     # Establish circuit
     hops = random.sample(routers, num_hops)
     the_circuit = Circuit(1, hops[0], hops, False)
     proxy_logger.debug("new circuit %s" % (the_circuit,))
 
-    return _extend_circuit(stage, num_hops)
+    key = None
+    if encrypted:
+        key = _aes_key(hops[0]['index'] + 1)
+        proxy_logger.info("new-fake-diffie-hellman, router index: {}, circuit outgoing: {}, key: 0x{}".format(
+            hops[0]['index'] + 1, hex(the_circuit.circuit_id), key.hex()
+        ))
+
+    return _extend_circuit(stage, num_hops, encrypted=encrypted, key=key)
 
 
-def _extend_circuit(stage, num_hops):
+def _extend_circuit(stage, num_hops, encrypted=False, key=None):
     global the_circuit
     # Circuit incomplete, Extend circuit
     the_circuit = Circuit(the_circuit.circuit_id, the_circuit.first_hop, the_circuit.hops, True)
@@ -171,6 +175,22 @@ def _extend_circuit(stage, num_hops):
     router_address = the_circuit.first_hop['address']
 
     return message, router_address
+
+
+def _relay_data(stage, num_hops, encrypted=False):
+    message = _echo_messages.pop()
+    mcm_rd = csci551fg.ipfg.RelayData(bytes(23))
+    mcm_rd = mcm_rd.set_circuit_id(the_circuit.circuit_id)
+    message = mcm_rd.set_contents(message.packet_data)
+    router_address = the_circuit.first_hop['address']
+    proxy_logger.debug("relaying packet {} to {}".format(message, router_address))
+
+    return message, router_address
+
+
+def _aes_key(router_id):
+    return bytes(
+        x ^ y for x, y in zip(struct.pack("!16s", os.urandom(16)), struct.pack("!16s", bytes([router_id] * 16))))
 
 
 def _handle_echo(data, address):
