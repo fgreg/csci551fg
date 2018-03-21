@@ -1,7 +1,5 @@
 
 
-sudo dnf install redhat-rpm-config
-sudo dnf install python3-devel
-pip3 install --user pycrypto
+a) No code was reused for this stage
 
-sudo setcap cap_net_raw+ep /usr/bin/python3.6
+b) This stage is complete but some of the log messages are not accurate. In particular, the destination IP address being logged by the routers is wrong. Furthermore, the incoming source IP is not 0 as specified by the requirements. Despite this, the program is still functional.
