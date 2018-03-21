@@ -15,9 +15,9 @@ from collections import namedtuple
 
 import csci551fg.ipfg
 
-CircuitEntry = namedtuple('CircuitEntry', ('id_i', 'id_o', 'prev_hop', 'prev_hop_ip', 'next_hop'))
+CircuitEntry = namedtuple('CircuitEntry', ('id_i', 'id_o', 'prev_hop', 'next_hop', 'key'))
 
-router_logger = logging.getLogger('csci551fg.router')
+router_logger = None
 
 router_selector = selectors.DefaultSelector()
 
@@ -37,6 +37,8 @@ def setup_log(stage, router_index):
     router_handler.setFormatter(logging.Formatter("%(message)s"))
     router_handler.setLevel(logging.INFO)
 
+    global router_logger
+    router_logger = logging.getLogger('csci551fg.router.%d' % (router_index + 1))
     router_logger.addHandler(router_handler)
     router_logger.setLevel(logging.DEBUG)
 
@@ -122,27 +124,35 @@ def _handle_echo(data, address, router_config, udp_connection):
 def _handle_minitor(data, address, router_config, udp_connection):
     mcm_message = csci551fg.ipfg.MCMPacket(data)
     (mcm_type,) = struct.unpack("!B", mcm_message.message_type)
+    router_logger.debug("from {} message {}".format(address, mcm_message))
     if mcm_type == csci551fg.ipfg.MCM_CE:
         _handle_circuit_extend(data, address, router_config, udp_connection)
-    elif mcm_type == csci551fg.ipfg.MCM_CED:
+    elif mcm_type == csci551fg.ipfg.MCM_CED or mcm_type == csci551fg.ipfg.MCM_ECED:
         _handle_circuit_extend_done(data, address, router_config, udp_connection)
     elif mcm_type == csci551fg.ipfg.MCM_RD:
         _handle_relay_data(data, address, router_config, udp_connection)
     elif mcm_type == csci551fg.ipfg.MCM_RRD:
         _handle_relay_reply_data(data, address, router_config, udp_connection)
+    elif mcm_type == csci551fg.ipfg.MCM_FDH:
+        _handle_fake_diffie_hellman(data, address, router_config, udp_connection)
+    elif mcm_type == csci551fg.ipfg.MCM_ECE:
+        _handle_encrypted_circuit_extend(data, address, router_config, udp_connection)
+    elif mcm_type == csci551fg.ipfg.MCM_RED:
+        _handle_relay_data(data, address, router_config, udp_connection, encrypted=True)
+    elif mcm_type == csci551fg.ipfg.MCM_RRED:
+        _handle_relay_reply_encrypted_data(data, address, router_config, udp_connection)
     else:
-        raise Exception("Unkown MCM message. Type %s, Message %s" % (mcm_type, mcm_message))
+        raise Exception("Unkown MCM message. Type {}, Message {}".format(hex(mcm_type), mcm_message))
 
 
 def _handle_circuit_extend(data, address, router_config, udp_connection):
     mcm_ce = csci551fg.ipfg.CircuitExtend(data)
-    router_logger.debug("from %s, circuit extend %s" % (address, mcm_ce))
+    router_logger.debug("from %s, circuit extend %s\n%s" % (address, mcm_ce, (_circuit_list,)))
     (id_i,) = struct.unpack("!H", mcm_ce.circuit_id)
     known_circuit = next(iter([c for c in _circuit_list if c.id_i == id_i]), None)
     if known_circuit:
         # Known circuit, forward on
-        ce_forward = mcm_ce.forward(known_circuit.next_hop)
-        ce_forward = ce_forward.set_circuit_id(known_circuit.id_o)
+        ce_forward = mcm_ce.forward(known_circuit.id_o)
 
         router_logger.info("forwarding extend circuit: incoming: %s, outgoing: %s at %s"
                            % (hex(known_circuit.id_i), hex(known_circuit.id_o), known_circuit.next_hop))
@@ -153,7 +163,7 @@ def _handle_circuit_extend(data, address, router_config, udp_connection):
         # New circuit
         id_o = (router_config.router_index + 1) * 256 + (len(_circuit_list) + 1)
         (next_hop,) = struct.unpack("!H", mcm_ce.next_hop)
-        _circuit_list.append(CircuitEntry(id_i, id_o, address[1], router_config['ip_address'], next_hop))
+        _circuit_list.append(CircuitEntry(id_i, id_o, address[1], next_hop, None))
         router_logger.info("new extend circuit: incoming: %s, outgoing %s at %s" % (hex(id_i), hex(id_o), next_hop))
 
         ced = mcm_ce.reply()
@@ -178,7 +188,7 @@ def _handle_circuit_extend_done(data, address, router_config, udp_connection):
     _outgoing_udp.append((mcm_ced, ('127.0.0.1', known_circuit.prev_hop)))
 
 
-def _handle_relay_data(data, address, router_config, udp_connection):
+def _handle_relay_data(data, address, router_config, udp_connection, encrypted=False):
     mcm_rd = csci551fg.ipfg.RelayData(data)
     (id_i,) = struct.unpack("!H", mcm_rd.circuit_id)
     known_circuit = next(iter([c for c in _circuit_list if c.id_i == id_i]), None)
@@ -186,15 +196,31 @@ def _handle_relay_data(data, address, router_config, udp_connection):
         if known_circuit.next_hop != csci551fg.ipfg.LAST_HOP:
             forward_data = mcm_rd.forward(router_config.ip_address, known_circuit.id_o)
             _outgoing_udp.append((forward_data, ('127.0.0.1', known_circuit.next_hop)))
-            i_packet = csci551fg.ipfg.IPv4Packet(mcm_rd.contents)
-            router_logger.info(
-                "relay packet, circuit incoming: {}, outgoing: {}, incoming src: {}, outgoing src: {}, dst:{}".format(
-                    hex(id_i), hex(known_circuit.id_o), i_packet.source_ipv4, router_config.ip_address,
-                    known_circuit.next_hop)
-            )
+            if not encrypted:
+                i_packet = csci551fg.ipfg.IPv4Packet(mcm_rd.contents)
+                router_logger.info(
+                    "relay packet, circuit incoming: {}, outgoing: {}, incoming src: {}, outgoing src: {}, dst:{}".format(
+                        hex(id_i), hex(known_circuit.id_o), i_packet.source_ipv4, router_config.ip_address,
+                        known_circuit.next_hop)
+                )
+            else:
+                mcm_red = csci551fg.ipfg.RelayEncryptedData(mcm_rd.packet_data)
+                mcm_red = mcm_red.set_contents(mcm_red.decrypt_contents(known_circuit.key)) \
+                    .forward(None, known_circuit.id_o)
+
+                _outgoing_udp.append((mcm_red, ('127.0.0.1', known_circuit.next_hop)))
+                router_logger.info(
+                    "relay encrypted packet, circuit incoming: {}, outgoing: {}".format(
+                        hex(id_i), hex(known_circuit.id_o))
+                )
         else:
             # Send external
-            i_packet = csci551fg.ipfg.IPv4Packet(mcm_rd.contents)
+            if encrypted:
+                i_packet = csci551fg.ipfg.IPv4Packet(
+                    csci551fg.ipfg.RelayEncryptedData(mcm_rd.packet_data).decrypt_contents(known_circuit.key))
+            else:
+                i_packet = csci551fg.ipfg.IPv4Packet(mcm_rd.contents)
+
             router_logger.info(
                 "outgoing packet, circuit incoming: {}, incoming src: {}, outgoing src: {}, dst: {}".format(
                     hex(id_i), i_packet.source_ipv4, router_config.ip_address, i_packet.destination_ipv4
@@ -213,22 +239,102 @@ def _handle_relay_reply_data(data, address, router_config, udp_connection):
     if known_circuit:
         # Reverse-Forward relay reply Messages
         mcm_rrd = mcm_rrd.set_circuit_id(known_circuit.id_i)
-        new_dest_ip = known_circuit.prev_ip
     else:
         known_circuit = next(iter([c for c in _circuit_list if c.id_i == id_i]), None)
         mcm_rrd = mcm_rrd.set_circuit_id(known_circuit.id_i)
-        new_dest_ip = '10.0.2.15'
 
     i_packet = csci551fg.ipfg.IPv4Packet(mcm_rrd.contents)
-    o_packet = i_packet.set_destination(ipaddress.IPv4Address(new_dest_ip))
+    o_packet = i_packet.set_destination(ipaddress.IPv4Address('10.0.2.15'))
     mcm_rrd = mcm_rrd.set_contents(o_packet.packet_data)
     router_logger.info(
         "relay reply packet, circuit incoming: {}, outgoing: {}, src: {}, incoming dst: {}, outgoing dst: {}".format(
             hex(id_i), hex(known_circuit.id_i), i_packet.source_ipv4, i_packet.destination_ipv4,
-            new_dest_ip
+            o_packet.destination_ipv4
         ))
 
     _outgoing_udp.append((mcm_rrd, ('127.0.0.1', known_circuit.prev_hop)))
+
+
+def _handle_relay_reply_encrypted_data(data, address, router_config, udp_connection, encrypted=False):
+    mcm_rred = csci551fg.ipfg.RelayReturnEncryptedData(data)
+    (id_i,) = struct.unpack("!H", mcm_rred.circuit_id)
+    known_circuit = next(iter([c for c in _circuit_list if c.id_o == id_i]), None)
+    if known_circuit:
+        # Reverse-Forward relay reply Messages
+        mcm_rred = mcm_rred.set_circuit_id(known_circuit.id_i)
+    else:
+        known_circuit = next(iter([c for c in _circuit_list if c.id_i == id_i]), None)
+        mcm_rred = mcm_rred.set_circuit_id(known_circuit.id_i)
+
+    mcm_rred = mcm_rred.encrypt_contents([known_circuit.key], mcm_rred.contents)
+    router_logger.info(
+        "relay reply packet, circuit incoming: {}, outgoing: {}".format(
+            hex(id_i), hex(known_circuit.id_i)
+        ))
+
+    _outgoing_udp.append((mcm_rred, ('127.0.0.1', known_circuit.prev_hop)))
+
+
+def _handle_fake_diffie_hellman(data, address, router_config, udp_connection):
+    mcm_fdh = csci551fg.ipfg.FakeDiffieHellman(data)
+    (id_i,) = struct.unpack("!H", mcm_fdh.circuit_id)
+    known_circuit = next(iter([c for c in _circuit_list if c.id_i == id_i]), None)
+    if known_circuit:
+        # Known circuit, decrypt key then forward
+        router_logger.debug("known circuit {}".format(known_circuit))
+        fdh_forward = mcm_fdh.forward(known_circuit.id_o, known_circuit.key)
+
+        router_logger.info(
+            "fake-diffie-hellman, forwarding, circuit incoming: {}, circuit outgoing: {}, key: 0x{}".format(
+                hex(id_i), hex(known_circuit.id_o), fdh_forward.session_key.hex()
+            ))
+
+        _outgoing_udp.append((fdh_forward, ('127.0.0.1', known_circuit.next_hop)))
+
+    else:
+        # New circuit
+        id_o = (router_config.router_index + 1) * 256 + (len(_circuit_list) + 1)
+        (next_hop,) = (None,)
+        _circuit_list.append(CircuitEntry(id_i, id_o, address[1], next_hop, mcm_fdh.session_key))
+        router_logger.info("fake-diffie-hellman, new circuit incoming: {}, key: 0x{}".format(
+            hex(id_i), mcm_fdh.session_key.hex()
+        ))
+
+
+def _handle_encrypted_circuit_extend(data, address, router_config, udp_connection):
+    mcm_ece = csci551fg.ipfg.EncryptedCircuitExtend(data)
+    (id_i,) = struct.unpack("!H", mcm_ece.circuit_id)
+    known_circuit = next(iter([c for c in _circuit_list if c.id_i == id_i]), None)
+    if known_circuit:
+        if not known_circuit.next_hop:
+            # This message is for us, fill in next hop and reply
+            (next_hop,) = struct.unpack("!H", mcm_ece.decrypt_next_hop(known_circuit.key))
+            router_logger.debug("decrypted next hop {}".format(next_hop))
+            _circuit_list[_circuit_list.index(known_circuit)] = CircuitEntry(known_circuit.id_i, known_circuit.id_o,
+                                                                             known_circuit.prev_hop, next_hop,
+                                                                             known_circuit.key)
+            router_logger.debug("circuit key 0x{} {}".format(_circuit_list[0].key.hex(), (_circuit_list,)))
+            router_logger.info(
+                "new encrypted extend circuit: incoming: %s, outgoing %s at %s" % (
+                    hex(id_i), hex(known_circuit.id_o), next_hop))
+
+            eced = mcm_ece.reply()
+
+            _outgoing_udp.append((eced, address))
+        else:
+            # This message needs to be forwarded
+            (next_hop,) = struct.unpack("!H", mcm_ece.decrypt_next_hop(known_circuit.key))
+            ece_forward = mcm_ece.forward(known_circuit.id_o) \
+                .set_next_hop(next_hop)
+            router_logger.debug("decrypted next hop {}".format(next_hop))
+            router_logger.info("forwarding encrypted extend circuit: incoming: %s, outgoing: %s at %s"
+                               % (hex(known_circuit.id_i), hex(known_circuit.id_o), known_circuit.next_hop))
+
+            _outgoing_udp.append((ece_forward, ('127.0.0.1', known_circuit.next_hop)))
+
+    else:
+        # Should never happen because diffie should always come first
+        raise Exception("Unknown circuit when handling ECE")
 
 
 def handle_external_connection(external_connection, mask, router_config=None):
@@ -252,8 +358,13 @@ def handle_external_connection(external_connection, mask, router_config=None):
                 router_logger.info("incoming packet, src: {}, dst: {}, outgoing circuit: {}".format(
                     echo_message.source_ipv4, echo_message.destination_ipv4, hex(return_circuit.id_i)
                 ))
-                rrd = csci551fg.ipfg.RelayReturnData(bytes(23 + len(echo_message.packet_data)))
-                rrd = rrd.set_contents(echo_message.packet_data)
+                if router_config.stage == 5:
+                    rrd = csci551fg.ipfg.RelayReturnData(bytes(23 + len(echo_message.packet_data)))
+                    rrd = rrd.set_contents(echo_message.packet_data)
+                else:
+                    contents = echo_message.set_destination(ipaddress.IPv4Address('0.0.0.0')).packet_data
+                    rrd = csci551fg.ipfg.RelayReturnEncryptedData(bytes(23 + len(contents)))
+                    rrd = rrd.encrypt_contents([return_circuit.key], contents)
                 rrd = rrd.set_circuit_id(return_circuit.id_i)
                 router_logger.debug("rrd {} prev_hop {}".format(rrd, ('127.0.0.1', return_circuit.prev_hop)))
                 _outgoing_udp.append((rrd, ('127.0.0.1', return_circuit.prev_hop)))
