@@ -1,6 +1,9 @@
 # Copyright 2018, Frank Greguska, All rights reserved.
 
 """
+Functions in this file
+    tun_alloc
+
 This module handles opening a connection to a tun/tap interface.
 
 It has been created with the help of:
@@ -14,9 +17,10 @@ It has been created with the help of:
 
 """
 import functools
-import fcntl
-import struct
 import operator
+import struct
+
+import fcntl
 
 # Constants from [3]
 IFF_TUN = 0x0001

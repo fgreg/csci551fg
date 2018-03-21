@@ -1,16 +1,21 @@
 # Copyright 2018, Frank Greguska, All rights reserved.
 
 """
+Functions in this file:
+    main
+    parse_config
+
+
 This module parses the configuration file, sets up logging, initializes the UDP
 socket, and then forks to run the proxy and the router.
 """
-import sys
-import os
-import pkg_resources
-import logging
-import logging.config
 import ipaddress
+import logging.config
+import os
+import sys
 from collections import namedtuple
+
+import pkg_resources
 
 import csci551fg.proxy
 import csci551fg.router
