@@ -13,13 +13,15 @@ import random
 import selectors
 import socket
 import struct
+import time
 from collections import namedtuple
 
+import csci551fg.crypto
 import csci551fg.ipfg
 import csci551fg.tunnel
 from csci551fg.driver import UDP_BUFFER_SIZE, TUNNEL_BUFFER_SIZE
 
-Circuit = namedtuple('Circuit', ['circuit_id', 'first_hop', 'hops', 'extending'])
+Circuit = namedtuple('Circuit', ['circuit_id', 'source_ip', 'first_hop', 'hops', 'ext_acked', 'extending', 'diffie'])
 
 the_circuit = None
 
@@ -73,10 +75,10 @@ def handle_udp_socket(udp_socket, mask, stage=None, num_hops=None):
                 router["ipv4_address"] = ipaddress.IPv4Address(ipv4_address)
 
             if stage >= 5:
-                proxy_logger.info("router: %d, pid: %d, port: %d, IP: %s" \
+                proxy_logger.info("router: %d, pid: %d, port: %d, IP: %s"
                                   % (router['index'] + 1, received_pid, address[1], router["ipv4_address"]))
             else:
-                proxy_logger.info("router: %d, pid: %d, port: %d" \
+                proxy_logger.info("router: %d, pid: %d, port: %d"
                                   % (router['index'] + 1, received_pid, address[1]))
 
             proxy_logger.debug("updated routers %s" % routers)
@@ -105,13 +107,13 @@ def handle_udp_socket(udp_socket, mask, stage=None, num_hops=None):
             elif stage > 4:
                 if not the_circuit:
                     # Need to establish new circuit
-                    (message, router_address) = _build_circuit(stage, num_hops, encrypted=stage >= 5)
-                elif the_circuit.hops and not the_circuit.extending:
+                    (message, router_address) = _build_circuit(stage, num_hops, encrypted=stage > 5)
+                elif not all(the_circuit.ext_acked) and not the_circuit.extending:
                     # Need to extend circuit
-                    (message, router_address) = _extend_circuit(stage, num_hops, encrypted=stage >= 5)
-                elif not the_circuit.hops and _echo_messages:
+                    (message, router_address) = _extend_circuit(stage, num_hops, encrypted=stage > 5)
+                elif all(the_circuit.ext_acked) and _echo_messages:
                     # Need to relay data
-                    (message, router_address) = _relay_data(stage, num_hops, encrypted=stage >= 5)
+                    (message, router_address) = _relay_data(stage, num_hops, encrypted=stage > 5)
                 else:
                     # Nothing to do
                     return
@@ -123,7 +125,9 @@ def handle_udp_socket(udp_socket, mask, stage=None, num_hops=None):
 
         if _proxy_out_udp:
             (message, router_address) = _proxy_out_udp.pop()
+            proxy_logger.debug("Proxy sending message {} to {}".format(message, router_address))
             udp_socket.sendto(message.packet_data, router_address)
+            time.sleep(.1)
 
 
 def _route_message(message):
@@ -143,34 +147,71 @@ def _build_circuit(stage, num_hops, encrypted=False):
     global the_circuit
     # Establish circuit
     hops = random.sample(routers, num_hops)
-    the_circuit = Circuit(1, hops[0], hops, False)
+    if stage > 5:
+        # Create keys for each hop
+        for router in hops:
+            router['key'] = csci551fg.crypto.new_key(router['index'] + 1)
+    the_circuit = Circuit(1, None, hops[0], hops, [False] * len(hops), False, False)
     proxy_logger.debug("new circuit %s" % (the_circuit,))
 
-    key = None
-    if encrypted:
-        key = _aes_key(hops[0]['index'] + 1)
-        proxy_logger.info("new-fake-diffie-hellman, router index: {}, circuit outgoing: {}, key: 0x{}".format(
-            hops[0]['index'] + 1, hex(the_circuit.circuit_id), key.hex()
-        ))
-
-    return _extend_circuit(stage, num_hops, encrypted=encrypted, key=key)
+    return _extend_circuit(stage, num_hops, encrypted=encrypted)
 
 
-def _extend_circuit(stage, num_hops, encrypted=False, key=None):
+def _extend_circuit(stage, num_hops, encrypted=False):
     global the_circuit
-    # Circuit incomplete, Extend circuit
-    the_circuit = Circuit(the_circuit.circuit_id, the_circuit.first_hop, the_circuit.hops, True)
-    message = csci551fg.ipfg.CircuitExtend(bytearray(25))
-    message = message.set_circuit_id(the_circuit.circuit_id)
+    hop_num = the_circuit.ext_acked.index(False) + 1
+    router_num = the_circuit.hops[hop_num - 1]['index'] + 1
     try:
-        next_hop = the_circuit.hops[1]
-        message = message.set_next_hop(next_hop['address'][1])
+        next_hop = the_circuit.hops[the_circuit.ext_acked.index(False) + 1]
     except IndexError:
         next_hop = {'address': (None, csci551fg.ipfg.LAST_HOP)}
-    message = message.set_next_hop(next_hop['address'][1])
-    hop_num = num_hops - len(the_circuit.hops) + 1
-    router_num = the_circuit.hops[0]['index'] + 1
-    proxy_logger.info("hop: %d, router: %s" % (hop_num, router_num))
+
+    # proxy_logger.debug("hop_num {} router_num {} next_hop {} encrypted {} circuit {}".format(
+    #     hop_num, router_num, next_hop, encrypted, the_circuit
+    # ))
+    # Circuit incomplete, Extend circuit
+    if encrypted:
+        # Building encrypted circuit check if diffie has been sent yet
+        if not the_circuit.diffie:
+            # Send diffie
+            key = the_circuit.hops[hop_num - 1]['key']
+            proxy_logger.info("hop: %d, router: %s" % (hop_num, router_num))
+            proxy_logger.info("new-fake-diffie-hellman, router index: {}, circuit outgoing: {}, key: 0x{}".format(
+                router_num, hex(the_circuit.circuit_id), key.hex()
+            ))
+
+            the_circuit = Circuit(the_circuit.circuit_id, the_circuit.source_ip, the_circuit.first_hop,
+                                  the_circuit.hops,
+                                  the_circuit.ext_acked,
+                                  False, True)
+            keys = [h['key'] for h in reversed(the_circuit.hops[:hop_num - 1])]
+            proxy_logger.debug("keys {}".format(keys))
+            message = csci551fg.ipfg.FakeDiffieHellman(bytes(39)) \
+                .set_circuit_id(the_circuit.circuit_id) \
+                .set_session_key(csci551fg.crypto.onion_encrypt(keys, key))
+        else:
+            # Send encrypted circuit extend
+            the_circuit = Circuit(the_circuit.circuit_id, the_circuit.source_ip, the_circuit.first_hop,
+                                  the_circuit.hops,
+                                  the_circuit.ext_acked,
+                                  True, False)
+            keys = [h['key'] for h in reversed(the_circuit.hops[:hop_num])]
+            proxy_logger.debug("keys {}".format(keys))
+            message = csci551fg.ipfg.EncryptedCircuitExtend(bytes(25)) \
+                .set_circuit_id(the_circuit.circuit_id) \
+                .set_next_hop(csci551fg.crypto.onion_encrypt(keys, struct.pack("!H", next_hop['address'][1])),
+                              packed=True)
+    else:
+        # Not building encrypted circuit, use regular circuit extend
+        the_circuit = Circuit(the_circuit.circuit_id, the_circuit.source_ip, the_circuit.first_hop, the_circuit.hops,
+                              the_circuit.ext_acked,
+                              True, False)
+        message = csci551fg.ipfg.CircuitExtend(bytes(25)) \
+            .set_circuit_id(the_circuit.circuit_id) \
+            .set_next_hop(next_hop['address'][1])
+
+        if stage <= 5:
+            proxy_logger.info("hop: %d, router: %s" % (hop_num, router_num))
 
     router_address = the_circuit.first_hop['address']
 
@@ -178,19 +219,32 @@ def _extend_circuit(stage, num_hops, encrypted=False, key=None):
 
 
 def _relay_data(stage, num_hops, encrypted=False):
+    global the_circuit
     message = _echo_messages.pop()
-    mcm_rd = csci551fg.ipfg.RelayData(bytes(23))
-    mcm_rd = mcm_rd.set_circuit_id(the_circuit.circuit_id)
-    message = mcm_rd.set_contents(message.packet_data)
-    router_address = the_circuit.first_hop['address']
-    proxy_logger.debug("relaying packet {} to {}".format(message, router_address))
+
+    if not encrypted:
+        mcm_rd = csci551fg.ipfg.RelayData(bytes(23))
+        mcm_rd = mcm_rd.set_circuit_id(the_circuit.circuit_id)
+        message = mcm_rd.set_contents(message.packet_data)
+        router_address = the_circuit.first_hop['address']
+        proxy_logger.debug("relaying packet {} to {}".format(message, router_address))
+    else:
+        source_ip = message.source_ipv4
+        message = message.set_source(ipaddress.IPv4Address('0.0.0.0'))
+        the_circuit = Circuit(the_circuit.circuit_id, source_ip, the_circuit.first_hop,
+                              the_circuit.hops, the_circuit.ext_acked,
+                              the_circuit.extending, the_circuit.diffie)
+        keys = [h['key'] for h in reversed(the_circuit.hops)]
+        mcm_red = csci551fg.ipfg.RelayEncryptedData(bytes(23)) \
+            .set_circuit_id(the_circuit.circuit_id) \
+            .set_source(ipaddress.IPv4Address('0.0.0.0')) \
+            .encrypt_contents(keys, message.packet_data)
+        router_address = the_circuit.first_hop['address']
+
+        message = mcm_red
+        proxy_logger.debug("relaying packet {} to {}".format(message, router_address))
 
     return message, router_address
-
-
-def _aes_key(router_id):
-    return bytes(
-        x ^ y for x, y in zip(struct.pack("!16s", os.urandom(16)), struct.pack("!16s", bytes([router_id] * 16))))
 
 
 def _handle_echo(data, address):
@@ -205,17 +259,33 @@ def _handle_echo(data, address):
 def _handle_minitor(data, address):
     mcm_message = csci551fg.ipfg.MCMPacket(data)
     (mcm_type,) = struct.unpack("!B", mcm_message.message_type)
-    if mcm_type == csci551fg.ipfg.MCM_CED:
+    if mcm_type == csci551fg.ipfg.MCM_CED or mcm_type == csci551fg.ipfg.MCM_ECED:
         mcm_ced = csci551fg.ipfg.CircuitExtendDone(data)
         (id_i,) = struct.unpack("!H", mcm_ced.circuit_id)
         global the_circuit
-        the_circuit = Circuit(the_circuit.circuit_id, the_circuit.first_hop, the_circuit.hops[1:], False)
-        proxy_logger.debug("popped hop: %s" % (the_circuit,))
+        ext_acks = the_circuit.ext_acked
+        ext_acks[ext_acks.index(False)] = True
+        the_circuit = Circuit(the_circuit.circuit_id, the_circuit.source_ip, the_circuit.first_hop, the_circuit.hops,
+                              ext_acks, False, False)
+        proxy_logger.debug("extend acked. %s" % (the_circuit,))
         proxy_logger.info("incoming extend-done circuit, incoming: %s from port: %d" % (hex(id_i), address[1]))
     elif mcm_type == csci551fg.ipfg.MCM_RRD:
         mcm_rrd = csci551fg.ipfg.RelayReturnData(data)
         (id_i,) = struct.unpack("!H", mcm_rrd.circuit_id)
         i_packet = csci551fg.ipfg.IPv4Packet(mcm_rrd.contents)
+        proxy_logger.info("incoming packet, circuit incoming: {}, src: {}, dst: {}".format(
+            hex(id_i), i_packet.source_ipv4, i_packet.destination_ipv4
+        ))
+        _echo_replies.append(i_packet)
+    elif mcm_type == csci551fg.ipfg.MCM_RRED:
+        mcm_rred = csci551fg.ipfg.RelayReturnEncryptedData(data)
+        (id_i,) = struct.unpack("!H", mcm_rred.circuit_id)
+
+        contents = mcm_rred.contents
+        for key in [h['key'] for h in the_circuit.hops]:
+            contents = csci551fg.crypto.onion_decrypt(key, contents)
+        i_packet = csci551fg.ipfg.IPv4Packet(contents) \
+            .set_destination(the_circuit.source_ip)
         proxy_logger.info("incoming packet, circuit incoming: {}, src: {}, dst: {}".format(
             hex(id_i), i_packet.source_ipv4, i_packet.destination_ipv4
         ))
@@ -229,7 +299,7 @@ def handle_tunnel(tunnel, mask):
         data = tunnel.read(TUNNEL_BUFFER_SIZE)
         echo_message = csci551fg.ipfg.ICMPEcho(data)
 
-        if (echo_message.source_ipv4 == ipaddress.IPv4Address('0.0.0.0')):
+        if echo_message.source_ipv4 == ipaddress.IPv4Address('0.0.0.0'):
             proxy_logger.debug("Dropped 0.0.0.0")
             return
 

@@ -6,11 +6,17 @@ This file contains a class responsible for parsing an ICMP echo packet and const
 import ipaddress
 import struct
 
+import csci551fg.crypto
+
 IPPROTO_MINITOR = 253
 MCM_CE = 0x52
+MCM_ECE = 0x62
 MCM_CED = 0x53
+MCM_ECED = 0x63
 MCM_RD = 0x51
+MCM_RED = 0x61
 MCM_RRD = 0x54
+MCM_RRED = 0x64
 
 MCM_FDH = 0x65
 
@@ -149,8 +155,9 @@ class ICMPEcho(IPv4Packet):
 class MCMPacket(IPv4Packet):
 
     def __init__(self, packet_data):
-        new_packet = bytearray(len(packet_data))
-        new_packet[:] = packet_data
+        super().__init__(packet_data)
+        new_packet = bytearray(len(self.packet_data))
+        new_packet[:] = self.packet_data
 
         # Zero out entire IP header
         new_packet[0:20] = [0 for i in range(0, 20)]
@@ -161,15 +168,15 @@ class MCMPacket(IPv4Packet):
         # Set source and destination
         new_packet[12:16] = ipaddress.IPv4Address('127.0.0.1').packed
         new_packet[16:20] = ipaddress.IPv4Address('127.0.0.1').packed
-        super().__init__(bytes(new_packet))
 
+        self.packet_data = bytes(new_packet)
         self.message_type = self.packet_data[20:21]
         self.circuit_id = self.packet_data[21:23]
 
     def __repr__(self):
         ip = super().__repr__()
-        mcm = "MCM: <message_type={}, circuit_id={}>".format(
-            self.message_type, self.circuit_id)
+        mcm = "MCM: <message_type=0x{}, circuit_id=0x{}>".format(
+            self.message_type.hex(), self.circuit_id.hex())
         return "{}\n{}".format(ip, mcm)
 
     def set_message_type(self, message_type):
@@ -178,7 +185,7 @@ class MCMPacket(IPv4Packet):
 
         new_data[20:21] = struct.pack("!B", message_type)
 
-        return self.__class__(new_data)
+        return self.__class__(bytes(new_data))
 
     def set_circuit_id(self, circuit_id):
         new_data = bytearray(len(self.packet_data))
@@ -186,53 +193,92 @@ class MCMPacket(IPv4Packet):
 
         new_data[21:23] = struct.pack("!H", circuit_id)
 
-        return self.__class__(new_data)
+        return self.__class__(bytes(new_data))
 
 
 class CircuitExtend(MCMPacket):
 
     def __init__(self, packet_data):
-        new_packet = bytearray(len(packet_data))
-        new_packet[:] = packet_data
+        super().__init__(packet_data)
+        new_packet = bytearray(len(self.packet_data))
+        new_packet[:] = self.packet_data
 
         new_packet[20:21] = struct.pack('!B', MCM_CE)
 
-        super().__init__(bytes(new_packet))
-
+        self.packet_data = bytes(new_packet)
         self.next_hop = self.packet_data[23:25]
 
     def __repr__(self):
         ip_mcm = super().__repr__()
-        ce = "CE: <next_hop={}>".format(
-            self.next_hop)
+        ce = "CE: <next_hop=0x{}>".format(
+            self.next_hop.hex())
         return "{}\n{}".format(ip_mcm, ce)
 
-    def set_next_hop(self, next_hop):
+    def set_next_hop(self, next_hop, packed=False):
         new_data = bytearray(len(self.packet_data))
         new_data[:] = self.packet_data
 
-        new_data[23:25] = struct.pack("!H", next_hop)
+        if not packed:
+            new_data[23:25] = struct.pack("!H", next_hop)
+        else:
+            new_data[23:25] = next_hop
 
-        return self.__class__(new_data)
+        return self.__class__(bytes(new_data))
 
     def reply(self):
         return CircuitExtendDone(self.packet_data[0:23])
 
     def forward(self, outgoing_circuit_id):
-        ced = CircuitExtend(self.packet_data)
-        ced = ced.set_circuit_id(outgoing_circuit_id)
-        return ced
+        ce = CircuitExtend(self.packet_data) \
+            .set_circuit_id(outgoing_circuit_id)
+        return ce
+
+
+class EncryptedCircuitExtend(CircuitExtend):
+    def __init__(self, packet_data):
+        super().__init__(packet_data)
+        new_packet = bytearray(len(self.packet_data))
+        new_packet[:] = self.packet_data
+
+        new_packet[20:21] = struct.pack('!B', MCM_ECE)
+
+        self.packet_data = (bytes(new_packet))
+
+    def __repr__(self):
+        ip_mcm_ce = super().__repr__()
+        ece = "ECE: <>"
+        return "{}\n{}".format(ip_mcm_ce, ece)
+
+    def decrypt_next_hop(self, key):
+        return csci551fg.crypto.onion_decrypt(key, self.next_hop)
+
+    def encrypt_next_hop(self, next_hop, keys):
+        new_data = bytearray(len(self.packet_data))
+        new_data[:] = self.packet_data
+
+        new_data[23:25] = struct.pack("!H", csci551fg.crypto.onion_encrypt(keys, next_hop))
+
+        return self.__class__(bytes(new_data))
+
+    def reply(self):
+        return EncryptedCircuitExtendDone(self.packet_data[0:23])
+
+    def forward(self, outgoing_circuit_id):
+        ece = EncryptedCircuitExtend(self.packet_data) \
+            .set_circuit_id(outgoing_circuit_id)
+        return ece
 
 
 class CircuitExtendDone(MCMPacket):
 
     def __init__(self, packet_data):
-        new_packet = bytearray(len(packet_data))
-        new_packet[:] = packet_data
+        super().__init__(packet_data)
+        new_packet = bytearray(len(self.packet_data))
+        new_packet[:] = self.packet_data
 
         new_packet[20:21] = struct.pack('!B', MCM_CED)
 
-        super().__init__(bytes(new_packet))
+        self.packet_data = (bytes(new_packet))
 
     def __repr__(self):
         ip_mcm = super().__repr__()
@@ -240,16 +286,33 @@ class CircuitExtendDone(MCMPacket):
         return "{}\n{}".format(ip_mcm, ced)
 
 
+class EncryptedCircuitExtendDone(CircuitExtendDone):
+
+    def __init__(self, packet_data):
+        super().__init__(packet_data)
+        new_packet = bytearray(len(self.packet_data))
+        new_packet[:] = self.packet_data
+
+        new_packet[20:21] = struct.pack('!B', MCM_ECED)
+
+        self.packet_data = (bytes(new_packet))
+
+    def __repr__(self):
+        ip_mcm_ced = super().__repr__()
+        eced = "ECED: <>"
+        return "{}\n{}".format(ip_mcm_ced, eced)
+
+
 class RelayData(MCMPacket):
 
     def __init__(self, packet_data):
-        new_packet = bytearray(len(packet_data))
-        new_packet[:] = packet_data
+        super().__init__(packet_data)
+        new_packet = bytearray(len(self.packet_data))
+        new_packet[:] = self.packet_data
 
         new_packet[20:21] = struct.pack('!B', MCM_RD)
 
-        super().__init__(bytes(new_packet))
-
+        self.packet_data = (bytes(new_packet))
         self.contents = self.packet_data[23:]
 
     def __repr__(self):
@@ -263,7 +326,7 @@ class RelayData(MCMPacket):
 
         new_data[23:] = contents
 
-        return self.__class__(new_data)
+        return self.__class__(bytes(new_data))
 
     def forward(self, router_ip, outgoing_circuit_id):
         rd = RelayData(self.packet_data)
@@ -274,16 +337,49 @@ class RelayData(MCMPacket):
         return rd
 
 
+class RelayEncryptedData(RelayData):
+    def __init__(self, packet_data):
+        super().__init__(packet_data)
+        new_packet = bytearray(len(self.packet_data))
+        new_packet[:] = self.packet_data
+
+        new_packet[20:21] = struct.pack('!B', MCM_RED)
+
+        self.packet_data = (bytes(new_packet))
+
+    def __repr__(self):
+        ip_mcm_rd = super().__repr__()
+        red = "RED: <>".format(self.contents)
+        return "{}\n{}".format(ip_mcm_rd, red)
+
+    def decrypt_contents(self, key):
+        return csci551fg.crypto.onion_decrypt(key, self.contents)
+
+    def encrypt_contents(self, keys, contents):
+        contents = csci551fg.crypto.onion_encrypt(keys, contents)
+        new_data = bytearray(23 + len(contents))
+        new_data[:] = self.packet_data[0:23]
+
+        new_data[23:] = contents
+
+        return self.__class__(bytes(new_data))
+
+    def forward(self, router_ip, outgoing_circuit_id):
+        red = RelayEncryptedData(self.packet_data) \
+            .set_circuit_id(outgoing_circuit_id)
+        return red
+
+
 class RelayReturnData(MCMPacket):
 
     def __init__(self, packet_data):
-        new_packet = bytearray(len(packet_data))
-        new_packet[:] = packet_data
+        super().__init__(packet_data)
+        new_packet = bytearray(len(self.packet_data))
+        new_packet[:] = self.packet_data
 
         new_packet[20:21] = struct.pack('!B', MCM_RRD)
 
-        super().__init__(bytes(new_packet))
-
+        self.packet_data = (bytes(new_packet))
         self.contents = self.packet_data[23:]
 
     def __repr__(self):
@@ -297,7 +393,37 @@ class RelayReturnData(MCMPacket):
 
         new_data[23:] = contents
 
-        return self.__class__(new_data)
+        return self.__class__(bytes(new_data))
+
+
+class RelayReturnEncryptedData(RelayReturnData):
+
+    def __init__(self, packet_data):
+        super().__init__(packet_data)
+        new_packet = bytearray(len(self.packet_data))
+        new_packet[:] = self.packet_data
+
+        new_packet[20:21] = struct.pack('!B', MCM_RRED)
+
+        self.packet_data = (bytes(new_packet))
+        self.contents = self.packet_data[23:]
+
+    def __repr__(self):
+        ip_mcm_rrd = super().__repr__()
+        rred = "RRED: <>".format(self.contents)
+        return "{}\n{}".format(ip_mcm_rrd, rred)
+
+    def decrypt_contents(self, key):
+        return csci551fg.crypto.onion_decrypt(key, self.contents)
+
+    def encrypt_contents(self, keys, contents):
+        contents = csci551fg.crypto.onion_encrypt(keys, contents)
+        new_data = bytearray(23 + len(contents))
+        new_data[:] = self.packet_data[0:23]
+
+        new_data[23:] = contents
+
+        return self.__class__(bytes(new_data))
 
 
 class FakeDiffieHellman(MCMPacket):
@@ -322,4 +448,11 @@ class FakeDiffieHellman(MCMPacket):
 
         new_data[23:] = struct.pack("!16s", session_key)
 
-        return self.__class__(new_data)
+        return self.__class__(bytes(new_data))
+
+    def forward(self, circuit_id, key):
+        fdh = FakeDiffieHellman(self.packet_data) \
+            .set_circuit_id(circuit_id) \
+            .set_session_key(csci551fg.crypto.onion_decrypt(key, self.session_key))
+
+        return fdh
