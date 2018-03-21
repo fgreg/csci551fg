@@ -1,6 +1,9 @@
 # Copyright 2018, Frank Greguska, All rights reserved.
 
 """
+Functions in this file:
+    ip_icmp_checksum
+
 This file contains a class responsible for parsing an ICMP echo packet and constructing replies
 """
 import ipaddress

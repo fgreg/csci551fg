@@ -1,6 +1,19 @@
 # Copyright 2018, Frank Greguska, All rights reserved.
 
 """
+Functions in this file:
+    setup_log
+    bind_router_socket
+    handle_udp_socket
+    _route_message
+    _build_circuit
+    _extend_circuit
+    _relay_data
+    _handle_echo
+    _handle_minitor
+    handle_tunnel
+    proxy
+
 This module is responsible for handling the proxy. It logs to the appropriate files
 and read/write to both the UDP socket and the Tunnel pipes. Messages are stored
 in memory while they are waiting to be written to one of the pipes.

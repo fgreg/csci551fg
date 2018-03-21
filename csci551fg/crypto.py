@@ -1,5 +1,10 @@
 # Copyright 2018, Frank Greguska, All rights reserved.
-
+"""
+Functions in this file:
+    onion_encrypt
+    onion_decrypt
+    new_key
+"""
 import os
 import struct
 

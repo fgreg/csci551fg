@@ -13,3 +13,7 @@ default:
 	@echo "#!/bin/bash" > proja
 	@echo "set -e" >> proja
 	@echo "python3 -m csci551fg.driver \"\$$@\"" >> proja
+
+.PHONY : clean
+clean :
+        -rm default $(objects)
