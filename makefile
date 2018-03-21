@@ -8,12 +8,12 @@ default:
 
 
 	python3 setup.py install --user
-	touch proja
-	chmod +x proja
-	@echo "#!/bin/bash" > proja
-	@echo "set -e" >> proja
-	@echo "python3 -m csci551fg.driver \"\$$@\"" >> proja
+	touch projb
+	chmod +x projb
+	@echo "#!/bin/bash" > projb
+	@echo "set -e" >> projb
+	@echo "python3 -m csci551fg.driver \"\$$@\"" >> projb
 
 .PHONY : clean
 clean :
-        -rm default $(objects)
+    -rm default $(objects)
