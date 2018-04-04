@@ -7,10 +7,10 @@ default:
 	pip3 install --user pycrypto
 
 	sudo pip3 install --user pycrypto
-	sudo mkdir -p /usr/local/lib/python3.6/site-packages/
-	sudo python3 setup.py install
 
 	python3 setup.py install --user
+	sudo mkdir -p /usr/local/lib/python3.6/site-packages/
+	sudo python3 setup.py install
 	touch projb
 	chmod +x projb
 	@echo "#!/bin/bash" > projb
