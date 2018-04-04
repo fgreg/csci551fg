@@ -6,6 +6,9 @@ default:
 	sudo setcap cap_net_raw+ep /usr/bin/python3.6
 	pip3 install --user pycrypto
 
+	sudo pip3 install --user pycrypto
+	sudo mkdir -p /usr/local/lib/python3.6/site-packages/
+	sudo python3 setup.py install
 
 	python3 setup.py install --user
 	touch projb
