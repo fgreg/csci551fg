@@ -155,6 +155,58 @@ class ICMPEcho(IPv4Packet):
         return ICMPEcho(bytes(reply_data))
 
 
+class TCPPacket(IPv4Packet):
+
+    def __init__(self, packet_data):
+        super().__init__(packet_data)
+
+        # TCP fields
+        self.source_port = packet_data[20:22]
+        self.destination_port = packet_data[22:24]
+        self.sequence_no = packet_data[24:28]
+        self.ack_no = packet_data[28:32]
+        self.data_offset_reserved_ns = packet_data[32:33]
+        self.tcp_flags = packet_data[33:34]
+        self.window_size = packet_data[34:36]
+        self.tcp_checksum = packet_data[36:38]
+        self.urgent = packet_data[38:40]
+        # self.options = packet_data[20:22]
+        # self.tcp_data
+
+    def __repr__(self):
+        ip = super().__repr__()
+        tcp = "TCP: <source_port={}, destination_port={}, sequence_no={}, ack_no={}, data_offset_reserved_ns={}, " \
+              "tcp_flags={}, window_size={}, tcp_checksum={}, urgent={}>".format(
+            self.source_port.hex(), self.destination_port.hex(), self.sequence_no.hex(), self.ack_no.hex(),
+            self.data_offset_reserved_ns.hex(),
+            self.tcp_flags.hex(), self.window_size.hex(), self.tcp_checksum.hex(), self.urgent.hex())
+        return "{}\n{}".format(ip, tcp)
+
+    def reply(self):
+        reply_data = bytearray(len(self.packet_data))
+        # Keep the first 20 bytes the same
+        reply_data[0:20] = self.packet_data[0:20]
+
+        # Swap source and destination ip
+        reply_data[12:16] = self.set_source(self.destination_ipv4).source_ipv4.packed
+        reply_data[16:20] = self.set_destination(self.source_ipv4).destination_ipv4.packed
+        # recompute the IP checksum
+        reply_data[10:12] = [0, 0]
+        reply_data[10:12] = ip_icmp_checksum(reply_data[0:20])
+
+        # Change type to 0
+        reply_data[20:21] = [0]
+
+        # Retain the rest of the to_bytes
+        reply_data[21:] = self.packet_data[21:]
+
+        # recompute the ICMP checksum
+        reply_data[22:24] = [0, 0]
+        reply_data[22:24] = ip_icmp_checksum(reply_data)
+
+        return ICMPEcho(bytes(reply_data))
+
+
 class MCMPacket(IPv4Packet):
 
     def __init__(self, packet_data):

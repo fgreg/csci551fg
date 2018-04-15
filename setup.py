@@ -4,7 +4,7 @@ from setuptools import setup, find_packages
 
 setup(
    name='csci551fg',
-   version='projb.stage6',
+   version='projc.stage7',
    packages=find_packages(),
    url='https://github.com/fgreg/csci551fg',
    license="AGPL-3.0",

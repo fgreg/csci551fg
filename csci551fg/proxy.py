@@ -179,9 +179,6 @@ def _extend_circuit(stage, num_hops, encrypted=False):
     except IndexError:
         next_hop = {'address': (None, csci551fg.ipfg.LAST_HOP)}
 
-    # proxy_logger.debug("hop_num {} router_num {} next_hop {} encrypted {} circuit {}".format(
-    #     hop_num, router_num, next_hop, encrypted, the_circuit
-    # ))
     # Circuit incomplete, Extend circuit
     if encrypted:
         # Building encrypted circuit check if diffie has been sent yet
@@ -299,9 +296,21 @@ def _handle_minitor(data, address):
             contents = csci551fg.crypto.onion_decrypt(key, contents)
         i_packet = csci551fg.ipfg.IPv4Packet(contents) \
             .set_destination(the_circuit.source_ip)
-        proxy_logger.info("incoming packet, circuit incoming: {}, src: {}, dst: {}".format(
-            hex(id_i), i_packet.source_ipv4, i_packet.destination_ipv4
-        ))
+
+        if i_packet.protocol == socket.IPPROTO_ICMP:
+            proxy_logger.info("incoming packet, circuit incoming: {}, src: {}, dst: {}".format(
+                hex(id_i), i_packet.source_ipv4, i_packet.destination_ipv4
+            ))
+        elif i_packet.protocol == socket.IPPROTO_TCP:
+            tcp_packet = csci551fg.ipfg.TCPPacket(i_packet.packet_data)
+            proxy_logger.info("incoming TCP packet, circuit incoming: {}, src IP/port: {}:{}, "
+                              "dst IP/port: {}:{}, seqno: {}, ackno: {}".format(
+                hex(id_i), tcp_packet.source_ipv4, tcp_packet.source_port,
+                tcp_packet.destination_ipv4, tcp_packet.destination_port, tcp_packet.sequence_no,
+                tcp_packet.ack_no
+            ))
+        else:
+            raise Exception("Unknown protocol for data returned {}. data {} ".format(i_packet.protocol, i_packet))
         _echo_replies.append(i_packet)
     else:
         raise Exception("Unkown MCM message. Type %s, Message %s" % (hex(mcm_type), mcm_message))
@@ -310,17 +319,30 @@ def _handle_minitor(data, address):
 def handle_tunnel(tunnel, mask):
     if mask & selectors.EVENT_READ:
         data = tunnel.read(TUNNEL_BUFFER_SIZE)
-        echo_message = csci551fg.ipfg.ICMPEcho(data)
 
-        if echo_message.source_ipv4 == ipaddress.IPv4Address('0.0.0.0'):
+        message = csci551fg.ipfg.IPv4Packet(data)
+        (ip_proto,) = struct.unpack("!B", message.protocol)
+
+        if message.source_ipv4 == ipaddress.IPv4Address('0.0.0.0'):
             proxy_logger.debug("Dropped 0.0.0.0")
             return
 
+        if ip_proto == socket.IPPROTO_ICMP:
+            message = csci551fg.ipfg.ICMPEcho(data)
+            proxy_logger.info("ICMP from tunnel, src: %s, dst: %s, type: %s", message.source_ipv4,
+                              message.destination_ipv4, struct.unpack("!B", message.icmp_type)[0])
+        elif ip_proto == socket.IPPROTO_TCP:
+            message = csci551fg.ipfg.TCPPacket(data)
+            proxy_logger.debug("TCP from tunnel, src IP/port: {}:{}, dst IP/port: {}:{}, seqno: {}, ackno {}".format(
+                message.source_ipv4, message.source_port, message.destination_ipv4,
+                message.destination_port, message.sequence_no, message.ack_no))
+        else:
+            raise Exception(
+                "Could not determine message type in proxy. IP Protocol: %s, Message: %s" % (ip_proto, message))
+
         proxy_logger.debug("Proxy received data from tunnel\n%s" % str(data))
 
-        proxy_logger.info("ICMP from tunnel, src: %s, dst: %s, type: %s", echo_message.source_ipv4,
-                          echo_message.destination_ipv4, struct.unpack("!B", echo_message.icmp_type)[0])
-        _echo_messages.append(echo_message)
+        _echo_messages.append(message)
 
     if mask & selectors.EVENT_WRITE:
         if _echo_replies:
