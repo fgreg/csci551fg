@@ -47,8 +47,6 @@ _echo_messages = []
 # Holding queue for messages waiting to go to the tunnel
 _echo_replies = []
 
-_proxy_out_udp = []
-
 
 def setup_log(stage):
     proxy_handler = logging.FileHandler(os.path.join(os.curdir, "stage%d.proxy.out" % stage), mode='w')
@@ -134,13 +132,8 @@ def handle_udp_socket(udp_socket, mask, stage=None, num_hops=None):
                 # Nothing to do
                 return
 
-            _proxy_out_udp.append((message, router_address))
-
-        if _proxy_out_udp:
-            (message, router_address) = _proxy_out_udp.pop()
             proxy_logger.debug("Proxy sending message {} to {}".format(message, router_address))
             udp_socket.sendto(message.packet_data, router_address)
-            time.sleep(.1)
 
 
 def _route_message(message):
@@ -231,6 +224,7 @@ def _extend_circuit(stage, num_hops, encrypted=False):
 def _relay_data(stage, num_hops, encrypted=False):
     global the_circuit
     message = _echo_messages.pop()
+    proxy_logger.debug("Popped message for sending to router {}".format(message))
 
     if not encrypted:
         mcm_rd = csci551fg.ipfg.RelayData(bytes(23))
@@ -252,7 +246,7 @@ def _relay_data(stage, num_hops, encrypted=False):
         router_address = the_circuit.first_hop['address']
 
         message = mcm_red
-        proxy_logger.debug("relaying packet {} to {}".format(message, router_address))
+        proxy_logger.debug("relaying encrypted packet {} to {}".format(message, router_address))
 
     return message, router_address
 
@@ -294,23 +288,27 @@ def _handle_minitor(data, address):
         contents = mcm_rred.contents
         for key in [h['key'] for h in the_circuit.hops]:
             contents = csci551fg.crypto.onion_decrypt(key, contents)
-        i_packet = csci551fg.ipfg.IPv4Packet(contents) \
-            .set_destination(the_circuit.source_ip)
+        i_packet = csci551fg.ipfg.IPv4Packet(contents)
 
-        if i_packet.protocol == socket.IPPROTO_ICMP:
+        ip_proto = i_packet.get_protocol()
+        if ip_proto == socket.IPPROTO_ICMP:
             proxy_logger.info("incoming packet, circuit incoming: {}, src: {}, dst: {}".format(
                 hex(id_i), i_packet.source_ipv4, i_packet.destination_ipv4
             ))
-        elif i_packet.protocol == socket.IPPROTO_TCP:
-            tcp_packet = csci551fg.ipfg.TCPPacket(i_packet.packet_data)
+            i_packet = csci551fg.ipfg.ICMPEcho(i_packet.packet_data).set_destination(the_circuit.source_ip)
+        elif ip_proto == socket.IPPROTO_TCP:
+            tcp_packet = csci551fg.ipfg.TCPPacket(i_packet.packet_data).set_destination(the_circuit.source_ip)
             proxy_logger.info("incoming TCP packet, circuit incoming: {}, src IP/port: {}:{}, "
                               "dst IP/port: {}:{}, seqno: {}, ackno: {}".format(
-                hex(id_i), tcp_packet.source_ipv4, tcp_packet.source_port,
-                tcp_packet.destination_ipv4, tcp_packet.destination_port, tcp_packet.sequence_no,
-                tcp_packet.ack_no
+                hex(id_i), tcp_packet.source_ipv4, tcp_packet.get_source_port(),
+                tcp_packet.destination_ipv4, tcp_packet.get_destination_port(), tcp_packet.get_sequence_no(),
+                tcp_packet.get_ack_no()
             ))
+            proxy_logger.debug("incoming TCP packet {}".format(tcp_packet))
+            i_packet = csci551fg.ipfg.TCPPacket(i_packet.packet_data).set_destination(the_circuit.source_ip)
         else:
-            raise Exception("Unknown protocol for data returned {}. data {} ".format(i_packet.protocol, i_packet))
+            proxy_logger.debug("Unknown protocol for data returned {}. data {} ".format(ip_proto, i_packet))
+            return
         _echo_replies.append(i_packet)
     else:
         raise Exception("Unkown MCM message. Type %s, Message %s" % (hex(mcm_type), mcm_message))
@@ -333,14 +331,14 @@ def handle_tunnel(tunnel, mask):
                               message.destination_ipv4, struct.unpack("!B", message.icmp_type)[0])
         elif ip_proto == socket.IPPROTO_TCP:
             message = csci551fg.ipfg.TCPPacket(data)
-            proxy_logger.debug("TCP from tunnel, src IP/port: {}:{}, dst IP/port: {}:{}, seqno: {}, ackno {}".format(
-                message.source_ipv4, message.source_port, message.destination_ipv4,
-                message.destination_port, message.sequence_no, message.ack_no))
+            proxy_logger.info("TCP from tunnel, src IP/port: {}:{}, dst IP/port: {}:{}, seqno: {}, ackno {}".format(
+                message.source_ipv4, message.get_source_port(), message.destination_ipv4,
+                message.get_destination_port(), message.get_sequence_no(), message.get_ack_no()))
         else:
             raise Exception(
                 "Could not determine message type in proxy. IP Protocol: %s, Message: %s" % (ip_proto, message))
 
-        proxy_logger.debug("Proxy received data from tunnel\n%s" % str(data))
+        proxy_logger.debug("Proxy received data from tunnel {}".format(message))
 
         _echo_messages.append(message)
 

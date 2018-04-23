@@ -32,18 +32,23 @@ import csci551fg.ipfg
 
 CircuitEntry = namedtuple('CircuitEntry', ('id_i', 'id_o', 'prev_hop', 'next_hop', 'key'))
 
+FlowId = namedtuple('FlowId', ('source_ip', 'source_port', 'dest_ip', 'dest_port', 'protocol'))
+
 router_logger = None
 
 router_selector = selectors.DefaultSelector()
 
 # Queue for messages waiting to be sent out the external interfaces
-_outgoing_external = []
+_outgoing_external_icmp = []
+_outgoing_external_tcp = []
 
 # Queue for messages being written by the UDP socket
 _outgoing_udp = []
 
 # List of known circuits
 _circuit_list = []
+
+_flow_map = dict()
 
 
 def setup_log(stage, router_index):
@@ -72,13 +77,19 @@ def router(router_conf):
 
     router_selector.register(udp_connection, selectors.EVENT_READ | selectors.EVENT_WRITE, udp_handler)
 
-    # Setup the connection to the external interface_name
-    external_socket = socket.socket(family=socket.AF_INET, type=socket.SOCK_RAW, proto=socket.IPPROTO_ICMP)
-    external_socket.bind((str(router_conf.ip_address), 0))
-    router_logger.debug("router %d bound to %s" % (router_conf.router_index, external_socket.getsockname()))
-    external_handler = functools.partial(handle_external_connection, router_config=router_conf)
+    # Setup the connection to the external interface_name for ICMP
+    external_icmp_socket = socket.socket(family=socket.AF_INET, type=socket.SOCK_RAW, proto=socket.IPPROTO_ICMP)
+    external_icmp_socket.bind((str(router_conf.ip_address), 0))
+    router_logger.debug("icmp router %d bound to %s" % (router_conf.router_index, external_icmp_socket.getsockname()))
 
-    router_selector.register(external_socket, selectors.EVENT_READ | selectors.EVENT_WRITE, external_handler)
+    # Setup the connection to the external interface_name for TCP
+    external_tcp_socket = socket.socket(family=socket.AF_INET, type=socket.SOCK_RAW, proto=socket.IPPROTO_TCP)
+    external_tcp_socket.bind((str(router_conf.ip_address), 0))
+    router_logger.debug("tcp router %d bound to %s" % (router_conf.router_index, external_tcp_socket.getsockname()))
+
+    external_handler = functools.partial(handle_external_connection, router_config=router_conf)
+    router_selector.register(external_icmp_socket, selectors.EVENT_READ | selectors.EVENT_WRITE, external_handler)
+    router_selector.register(external_tcp_socket, selectors.EVENT_READ | selectors.EVENT_WRITE, external_handler)
 
     # Start the select loop
     while True:
@@ -89,11 +100,14 @@ def router(router_conf):
 
 
 def handle_udp_connection(udp_connection, mask, router_config=None):
+    import time
+    time.sleep(.1)
     if mask & selectors.EVENT_READ:
         data, address = udp_connection.recvfrom(router_config.buffer_size)
+        router_logger.debug("UDP packet received {} bytes from {}.".format(len(data), address))
 
         message = csci551fg.ipfg.IPv4Packet(data)
-        (ip_proto,) = struct.unpack("!B", message.protocol)
+        ip_proto = message.get_protocol()
         if ip_proto == socket.IPPROTO_ICMP:
             message_handler = _handle_echo
         elif ip_proto == csci551fg.ipfg.IPPROTO_MINITOR:
@@ -110,7 +124,11 @@ def handle_udp_connection(udp_connection, mask, router_config=None):
         if _outgoing_udp:
             (message, address) = _outgoing_udp.pop()
 
-            udp_connection.sendto(message.packet_data, address)
+            n_bytes = udp_connection.sendto(message.packet_data, address)
+            router_logger.debug(
+                "UDP packet {} bytes. Sent {} bytes to {}".format(len(message.packet_data[:]), n_bytes, address))
+    else:
+        raise Exception("Unknown event on UDP socket {}".format(mask))
 
 
 def _handle_echo(data, address, router_config, udp_connection):
@@ -133,7 +151,7 @@ def _handle_echo(data, address, router_config, udp_connection):
     else:
         outgoing = echo_message.set_source(router_config.ip_address)
         router_logger.debug("Incoming source %s, Outgoing source %s" % (echo_message.source_ipv4, outgoing.source_ipv4))
-        _outgoing_external.append(outgoing)
+        _outgoing_external_icmp.append(outgoing)
 
 
 def _handle_minitor(data, address, router_config, udp_connection):
@@ -209,8 +227,6 @@ def _handle_relay_data(data, address, router_config, udp_connection, encrypted=F
     known_circuit = next(iter([c for c in _circuit_list if c.id_i == id_i]), None)
     if known_circuit:
         if known_circuit.next_hop != csci551fg.ipfg.LAST_HOP:
-            forward_data = mcm_rd.forward(router_config.ip_address, known_circuit.id_o)
-            _outgoing_udp.append((forward_data, ('127.0.0.1', known_circuit.next_hop)))
             if not encrypted:
                 i_packet = csci551fg.ipfg.IPv4Packet(mcm_rd.contents)
                 router_logger.info(
@@ -218,6 +234,8 @@ def _handle_relay_data(data, address, router_config, udp_connection, encrypted=F
                         hex(id_i), hex(known_circuit.id_o), i_packet.source_ipv4, router_config.ip_address,
                         known_circuit.next_hop)
                 )
+                forward_data = mcm_rd.forward(router_config.ip_address, known_circuit.id_o)
+                _outgoing_udp.append((forward_data, ('127.0.0.1', known_circuit.next_hop)))
             else:
                 mcm_red = csci551fg.ipfg.RelayEncryptedData(mcm_rd.packet_data)
                 mcm_red = mcm_red.set_contents(mcm_red.decrypt_contents(known_circuit.key)) \
@@ -236,11 +254,40 @@ def _handle_relay_data(data, address, router_config, udp_connection, encrypted=F
             else:
                 i_packet = csci551fg.ipfg.IPv4Packet(mcm_rd.contents)
 
-            router_logger.info(
-                "outgoing packet, circuit incoming: {}, incoming src: {}, outgoing src: {}, dst: {}".format(
-                    hex(id_i), i_packet.source_ipv4, router_config.ip_address, i_packet.destination_ipv4
-                ))
-            _handle_echo(i_packet.packet_data, address, router_config, udp_connection)
+            ip_proto = i_packet.get_protocol()
+            if ip_proto == socket.IPPROTO_ICMP:
+                icmp_packet = csci551fg.ipfg.ICMPEcho(i_packet.packet_data)
+                flow_id = FlowId(icmp_packet.source_ipv4, 0, icmp_packet.destination_ipv4, 0, ip_proto)
+                router_logger.debug("Saving flow id {}:{}".format(flow_id, known_circuit))
+                _flow_map[flow_id] = known_circuit
+                router_logger.info(
+                    "outgoing packet, circuit incoming: {}, incoming src: {}, outgoing src: {}, dst: {}".format(
+                        hex(id_i), i_packet.source_ipv4, router_config.ip_address, i_packet.destination_ipv4
+                    ))
+                _handle_echo(i_packet.packet_data, address, router_config, udp_connection)
+            elif ip_proto == socket.IPPROTO_TCP:
+                tcp_packet = csci551fg.ipfg.TCPPacket(i_packet.packet_data)
+
+                incoming_source_ip = tcp_packet.source_ipv4
+                tcp_packet = tcp_packet.set_source(router_config.ip_address)
+                flow_id = FlowId(tcp_packet.source_ipv4, tcp_packet.get_source_port(), tcp_packet.destination_ipv4,
+                                 tcp_packet.get_destination_port(), ip_proto)
+                router_logger.debug("Saving flow id {}:{}".format(flow_id, known_circuit))
+                _flow_map[flow_id] = known_circuit
+
+                router_logger.info(
+                    "outgoing TCP packet, circuit incoming: {}, incoming src IP/port: {}:{}, "
+                    "outgoing src IP/port: {}:{}, dst IP/port: {}:{}, seqno: {}, ackno: {}".format(
+                        hex(id_i), incoming_source_ip, tcp_packet.get_source_port(), tcp_packet.source_ipv4,
+                        tcp_packet.get_source_port(), tcp_packet.destination_ipv4, tcp_packet.get_destination_port(),
+                        tcp_packet.get_sequence_no(), tcp_packet.get_ack_no()
+                    ))
+
+                _outgoing_external_tcp.append(tcp_packet)
+            else:
+
+                raise Exception("Unknown protocol {}. Packet {}. contents: 0x{}".format(ip_proto, i_packet,
+                                                                                        i_packet.packet_data.hex()))
     else:
         packet = csci551fg.ipfg.IPv4Packet(mcm_rd.contents)
         router_logger.info("unknown incoming circuit: %s, src: %s, dst: %s"
@@ -353,41 +400,79 @@ def _handle_encrypted_circuit_extend(data, address, router_config, udp_connectio
 
 
 def handle_external_connection(external_connection, mask, router_config=None):
+    import time
+    time.sleep(.1)
     if mask & selectors.EVENT_READ:
         data, address = external_connection.recvfrom(router_config.buffer_size)
-        echo_message = csci551fg.ipfg.ICMPEcho(data)
+        ip_packet = csci551fg.ipfg.IPv4Packet(data)
 
-        router_logger.debug("received message on external interface %s" % echo_message)
+        # router_logger.debug("received message on external interface %s" % ip_packet)
 
         # Only process if it addressed to us
-        if echo_message.destination_ipv4 == router_config.ip_address:
+        if ip_packet.destination_ipv4 == router_config.ip_address:
             if router_config.stage <= 4:
+                echo_message = csci551fg.ipfg.ICMPEcho(data)
                 router_logger.info("ICMP from raw sock, src: %s, dst: %s, type: %s",
-                                   echo_message.source_ipv4, echo_message.destination_ipv4, echo_message.icmp_type[0])
+                                   ip_packet.source_ipv4, ip_packet.destination_ipv4, echo_message.icmp_type[0])
 
-                incoming = echo_message.set_destination(ipaddress.IPv4Address('10.0.2.15'))
+                incoming = ip_packet.set_destination(ipaddress.IPv4Address('10.0.2.15'))
 
                 _outgoing_udp.append((incoming, router_config.proxy_address))
             else:
-                return_circuit = _circuit_list[0]
-                router_logger.info("incoming packet, src: {}, dst: {}, outgoing circuit: {}".format(
-                    echo_message.source_ipv4, echo_message.destination_ipv4, hex(return_circuit.id_i)
-                ))
-                if router_config.stage == 5:
-                    rrd = csci551fg.ipfg.RelayReturnData(bytes(23 + len(echo_message.packet_data)))
-                    rrd = rrd.set_contents(echo_message.packet_data)
+                if ip_packet.get_protocol() == socket.IPPROTO_ICMP:
+                    flow_id = FlowId(ip_packet.destination_ipv4, 0, ip_packet.source_ipv4, 0, ip_packet.get_protocol())
                 else:
-                    contents = echo_message.set_destination(ipaddress.IPv4Address('0.0.0.0')).packet_data
+                    tcp_packet = csci551fg.ipfg.TCPPacket(data)
+                    flow_id = FlowId(ip_packet.destination_ipv4, tcp_packet.get_destination_port(),
+                                     ip_packet.source_ipv4, tcp_packet.get_source_port(), ip_packet.get_protocol())
+
+                try:
+                    return_circuit = _flow_map[flow_id]
+                except KeyError:
+                    router_logger.debug("Unknown Flow id: {}".format(flow_id))
+                    return
+
+                router_logger.debug("Flow id: {}".format(flow_id))
+
+                if router_config.stage == 5:
+                    rrd = csci551fg.ipfg.RelayReturnData(bytes(23 + len(ip_packet.packet_data)))
+                    rrd = rrd.set_contents(ip_packet.packet_data)
+                else:
+                    if ip_packet.get_protocol() == socket.IPPROTO_TCP:
+                        contents = csci551fg.ipfg.TCPPacket(ip_packet.packet_data).set_destination(
+                            ipaddress.IPv4Address('0.0.0.0')).packet_data
+                    else:
+                        contents = ip_packet.set_destination(ipaddress.IPv4Address('0.0.0.0')).packet_data
                     rrd = csci551fg.ipfg.RelayReturnEncryptedData(bytes(23 + len(contents)))
                     rrd = rrd.encrypt_contents([return_circuit.key], contents)
                 rrd = rrd.set_circuit_id(return_circuit.id_i)
                 router_logger.debug("rrd {} prev_hop {}".format(rrd, ('127.0.0.1', return_circuit.prev_hop)))
+
+                if ip_packet.get_protocol() == socket.IPPROTO_ICMP:
+                    router_logger.info("incoming packet, src: {}, dst: {}, outgoing circuit: {}".format(
+                        ip_packet.source_ipv4, ip_packet.destination_ipv4, hex(return_circuit.id_i)
+                    ))
+                elif ip_packet.get_protocol() == socket.IPPROTO_TCP:
+                    tcp_packet = csci551fg.ipfg.TCPPacket(data)
+                    router_logger.debug("received message on external interface %s" % tcp_packet)
+                    router_logger.info("incoming TCP packet, src IP/port: {}:{}, "
+                                       "dst IP/port: {}:{}, seqno: {}, ackno: {}, outgoing circuit: {}".format(
+                        tcp_packet.source_ipv4, tcp_packet.get_source_port(), tcp_packet.destination_ipv4,
+                        tcp_packet.get_destination_port(), tcp_packet.get_sequence_no(), tcp_packet.get_ack_no(),
+                        hex(return_circuit.id_i)
+                    ))
+
                 _outgoing_udp.append((rrd, ('127.0.0.1', return_circuit.prev_hop)))
 
     elif mask & selectors.EVENT_WRITE:
-        if _outgoing_external:
-            outgoing = _outgoing_external.pop()
+        if external_connection.proto == socket.IPPROTO_ICMP and _outgoing_external_icmp:
+            outgoing = _outgoing_external_icmp.pop()
+            router_logger.debug("Sending external ICMP %s" % outgoing)
 
-            router_logger.debug("Sending external %s" % outgoing)
+            external_connection.sendmsg([outgoing.packet_data[20:]], [], 0, (str(outgoing.destination_ipv4), 0))
+        elif external_connection.proto == socket.IPPROTO_TCP and _outgoing_external_tcp:
+            outgoing = _outgoing_external_tcp.pop()
+            router_logger.debug("Sending external TCP {}".format(outgoing))
 
-            external_connection.sendmsg([outgoing.packet_data[20:]], [], 0, (str(outgoing.destination_ipv4), 1))
+            external_connection.sendto(outgoing.packet_data[20:], (str(outgoing.destination_ipv4),
+                                                                   outgoing.get_destination_port()))
