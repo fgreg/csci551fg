@@ -2,22 +2,9 @@
 
 """
 Functions in this file:
-    setup_log
-    router
-    handle_udp_connection
-    _handle_echo
-    _handle_minitor
-    _handle_circuit_extend
-    _handle_circuit_extend_done
-    _handle_relay_data
-    _handle_relay_reply_data
-    _handle_relay_reply_encrypted_data
-    _handle_fake_diffie_hellman
-    _handle_encrypted_circuit_extend
-    handle_external_connection
 
-This file is responsible for the router functions. It handles logging to the
-correct files and responding to ICMP echo requests.
+This file defines a Router class that is responsible for the router functions. It handles logging to the
+correct files and responding to socket requests.
 """
 import ipaddress
 import logging
