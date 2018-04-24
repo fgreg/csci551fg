@@ -279,6 +279,12 @@ class MCMPacket(IPv4Packet):
             self.message_type.hex(), self.circuit_id.hex())
         return "{}\n{}".format(ip, mcm)
 
+    def get_message_type(self):
+        return struct.unpack("!B", self.message_type)[0]
+
+    def get_circuit_id(self):
+        return struct.unpack("!H", self.circuit_id)[0]
+
     def set_message_type(self, message_type):
         new_data = bytearray(len(self.packet_data))
         new_data[:] = self.packet_data
