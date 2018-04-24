@@ -23,6 +23,9 @@ MCM_RRED = 0x64
 
 MCM_FDH = 0x65
 
+MCM_KR = 0x91
+MCM_RW = 0x92
+
 LAST_HOP = 65535
 
 
@@ -214,30 +217,6 @@ class TCPPacket(IPv4Packet):
 
         checksum = ip_icmp_checksum(checksum_data)
         new_packet_data[36:38] = checksum
-
-        # print("packet data 0x{}\n"
-        #       "len checksum_data {}\n"
-        #       "source ip {}\t0x{}\n"
-        #       "dest ip {}\t0x{}\n"
-        #       "reserved 0x{}\n"
-        #       "protocol 0x{}\n"
-        #       "length {}\t0x{}\n"
-        #       "tcp header and data len {} 0x{}\n"
-        #       "checksum 0x{}\n"
-        #       "new packet data 0x{}\n"
-        #       "new checksum 0x{}\n".format(
-        #     packet_data.hex(),
-        #     len(checksum_data),
-        #     new_packet.source_ipv4, checksum_data[0:4].hex(),
-        #     new_packet.destination_ipv4, checksum_data[4:8].hex(),
-        #     checksum_data[8:9].hex(),
-        #     checksum_data[9:10].hex(),
-        #     struct.unpack("!H", checksum_data[10:12])[0], checksum_data[10:12].hex(),
-        #     len(new_packet.packet_data), checksum_data[12:].hex(),
-        #     checksum_data[48:50].hex(),
-        #     new_packet_data.hex(),
-        #     new_packet_data[36:38].hex()
-        # ))
 
         return new_packet_data
 
@@ -562,3 +541,76 @@ class FakeDiffieHellman(MCMPacket):
             .set_session_key(csci551fg.crypto.onion_decrypt(key, self.session_key))
 
         return fdh
+
+
+class KillRouter(MCMPacket):
+
+    def __init__(self, packet_data):
+        new_packet = bytearray(len(packet_data))
+        new_packet[:] = packet_data
+
+        new_packet[20:21] = struct.pack('!B', MCM_KR)
+        new_packet[12:16] = ipaddress.IPv4Address('127.0.0.1').packed
+        new_packet[16:20] = ipaddress.IPv4Address('127.0.0.1').packed
+
+        super().__init__(bytes(new_packet))
+
+    def __repr__(self):
+        ip_mcm = super().__repr__()
+        kr = "KR: <>"
+        return "{}\n{}".format(ip_mcm, kr)
+
+
+class RouterWorried(MCMPacket):
+    def __init__(self, packet_data):
+        new_packet = bytearray(len(packet_data))
+        new_packet[:] = packet_data
+
+        new_packet[20:21] = struct.pack('!B', MCM_RW)
+        new_packet[12:16] = ipaddress.IPv4Address('127.0.0.1').packed
+        new_packet[16:20] = ipaddress.IPv4Address('127.0.0.1').packed
+
+        super().__init__(bytes(new_packet))
+
+        self.contents = self.packet_data[23:]
+        self.self_name = self.packet_data[23:25]
+        self.next_name = self.packet_data[25:27]
+
+    def __repr__(self):
+        ip_mcm = super().__repr__()
+        rw = "RW: <self_name={}, next_name={}>".format(self.get_self_name(), self.get_next_name())
+        return "{}\n{}".format(ip_mcm, rw)
+
+    def get_self_name(self):
+        return struct.unpack("!H", self.self_name)[0]
+
+    def set_self_name(self, self_name):
+        new_data = bytearray(39)
+        new_data[:] = self.packet_data[:]
+
+        new_data[23:25] = struct.pack("!H", self_name)
+
+        return self.__class__(bytes(new_data))
+
+    def get_next_name(self):
+        return struct.unpack("!H", self.next_name)[0]
+
+    def set_next_name(self, next_name):
+        new_data = bytearray(39)
+        new_data[:] = self.packet_data[:]
+
+        new_data[25:27] = struct.pack("!H", next_name)
+
+        return self.__class__(bytes(new_data))
+
+    def decrypt_contents(self, key):
+        return csci551fg.crypto.onion_decrypt(key, self.contents)
+
+    def encrypt_contents(self, keys, contents):
+        contents = csci551fg.crypto.onion_encrypt(keys, contents)
+        new_data = bytearray(23 + len(contents))
+        new_data[:] = self.packet_data[0:23]
+
+        new_data[23:] = contents
+
+        return self.__class__(bytes(new_data))

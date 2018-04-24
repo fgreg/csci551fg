@@ -1,0 +1,5 @@
+# this is a comment
+stage 9
+num_routers 6
+minitor_hops 3
+die_after 5
