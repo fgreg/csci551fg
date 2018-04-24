@@ -34,7 +34,7 @@ import csci551fg.ipfg
 import csci551fg.tunnel
 from csci551fg.driver import UDP_BUFFER_SIZE, TUNNEL_BUFFER_SIZE
 
-Circuit = namedtuple('Circuit', ['circuit_id', 'source_ip', 'first_hop', 'hops', 'ext_acked', 'extending', 'diffie'])
+Circuit = namedtuple('Circuit', ['circuit_id', 'source_ip', 'first_hop', 'hops', 'ext_acked', 'num_packets_sent'])
 FlowId = namedtuple('FlowId', ('source_ip', 'source_port', 'dest_ip', 'dest_port', 'protocol'))
 
 flow_map = dict()
@@ -107,10 +107,11 @@ def handle_udp_socket(udp_socket, mask, stage=None, num_hops=None):
             message_handler(data, address)
 
 
-def _udp_send(stage, data_message, num_hops):
+def _udp_send(stage, data_message, num_hops, die_after):
     if all(router["address"] is not None for router in routers):
         if stage <= 4:
             router_address = _route_message(data_message)
+            my_socket.sendto(data_message.packet_data, router_address)
         elif stage > 4:
             if data_message.get_protocol() == socket.IPPROTO_ICMP:
                 flow_id = FlowId(data_message.source_ipv4, 0,
@@ -130,8 +131,19 @@ def _udp_send(stage, data_message, num_hops):
             (data_message, router_address) = _relay_data(the_circuit, data_message, stage, num_hops,
                                                          encrypted=stage > 5)
 
-        proxy_logger.debug("Proxy sending message {} to {}".format(data_message, router_address))
-        my_socket.sendto(data_message.packet_data, router_address)
+            my_socket.sendto(data_message.packet_data, router_address)
+            flow_map[flow_id] = Circuit(the_circuit.circuit_id, the_circuit.source_ip, the_circuit.first_hop,
+                                        the_circuit.hops, the_circuit.ext_acked, the_circuit.num_packets_sent + 1)
+            the_circuit = flow_map[flow_id]
+            proxy_logger.debug(
+                "Circuit {} has now sent {} packets".format(hex(the_circuit.circuit_id),
+                                                            the_circuit.num_packets_sent))
+            if die_after and the_circuit.num_packets_sent == die_after and len(routers) > num_hops:
+                mortal_router = the_circuit.hops[1]
+                routers.pop(routers.index(mortal_router))
+                proxy_logger.debug("Takes aim at router {}. Bang!".format(mortal_router['index'] + 1))
+
+                my_socket.sendto(csci551fg.ipfg.KillRouter(bytearray(21)).packet_data, mortal_router['address'])
 
 
 def _route_message(message):
@@ -154,7 +166,7 @@ def _build_new_circuit(stage, num_hops, encrypted=False):
         # Create keys for each hop
         for router in hops:
             router['key'] = csci551fg.crypto.new_key(router['index'] + 1)
-    the_circuit = Circuit(len(flow_map) + 1, None, hops[0], hops, [False] * len(hops), False, False)
+    the_circuit = Circuit(len(flow_map) + 1, None, hops[0], hops, [False] * len(hops), 0)
     proxy_logger.debug("new circuit %s" % (the_circuit,))
 
     for hop_idx in range(0, len(the_circuit.hops)):
@@ -195,7 +207,7 @@ def _build_new_circuit(stage, num_hops, encrypted=False):
         ext_acks = the_circuit.ext_acked
         ext_acks[ext_acks.index(False)] = True
         the_circuit = Circuit(the_circuit.circuit_id, the_circuit.source_ip, the_circuit.first_hop, the_circuit.hops,
-                              ext_acks, False, False)
+                              ext_acks, 0)
         proxy_logger.debug("extend acked. %s" % (the_circuit,))
         proxy_logger.info("incoming extend-done circuit, incoming: %s from port: %d" % (
             hex(csci551fg.ipfg.MCMPacket(data).get_circuit_id()), address[1]))
@@ -204,7 +216,6 @@ def _build_new_circuit(stage, num_hops, encrypted=False):
 
 
 def _relay_data(circuit, message, stage, num_hops, encrypted=False):
-
     if not encrypted:
         mcm_rd = csci551fg.ipfg.RelayData(bytes(23))
         mcm_rd = mcm_rd.set_circuit_id(circuit.circuit_id)
@@ -238,7 +249,11 @@ def _handle_minitor(data, address):
     mcm_message = csci551fg.ipfg.MCMPacket(data)
     mcm_type = mcm_message.get_message_type()
     id_i = mcm_message.get_circuit_id()
-    flow_id, the_circuit = next(iter([(f, c) for f, c in flow_map.items() if c.circuit_id == id_i]))
+    flow_id, the_circuit = next(iter([(f, c) for f, c in flow_map.items() if c.circuit_id == id_i]), (None, None))
+    if not flow_id and the_circuit:
+        proxy_logger.debug("Dropping packet because no circuit exists for it.")
+        return
+
     if mcm_type == csci551fg.ipfg.MCM_RRD:
         mcm_rrd = csci551fg.ipfg.RelayReturnData(data)
         i_packet = csci551fg.ipfg.IPv4Packet(mcm_rrd.contents)
@@ -274,6 +289,9 @@ def _handle_minitor(data, address):
             proxy_logger.debug("Unknown protocol for data returned {}. data {} ".format(ip_proto, i_packet))
             return
         tunnel_write(i_packet)
+    elif mcm_type == csci551fg.ipfg.MCM_RW:
+        flow_map.pop(flow_id)
+
     else:
         raise Exception("Unkown MCM message. Type %s, Message %s" % (hex(mcm_type), mcm_message))
 
@@ -283,7 +301,7 @@ def tunnel_write(ipv4_packet):
     proxy_logger.debug("wrote %d bytes to tunnel" % num_bytes)
 
 
-def handle_tunnel(tunnel, mask, stage=None, num_hops=None):
+def handle_tunnel(tunnel, mask, stage=None, num_hops=None, die_after=None):
     if mask & selectors.EVENT_READ:
         data = tunnel.read(TUNNEL_BUFFER_SIZE)
 
@@ -309,7 +327,7 @@ def handle_tunnel(tunnel, mask, stage=None, num_hops=None):
 
         proxy_logger.debug("Proxy received data from tunnel {}".format(message))
 
-        _udp_send(stage, message, num_hops)
+        _udp_send(stage, message, num_hops, die_after)
 
 
 def proxy(**kwargs):
@@ -318,7 +336,8 @@ def proxy(**kwargs):
     if kwargs['stage'] >= 2:
         global my_tunnel
         my_tunnel = csci551fg.tunnel.tun_alloc("tun1", [csci551fg.tunnel.IFF_TUN, csci551fg.tunnel.IFF_NO_PI])
-        tunnel_handler = functools.partial(handle_tunnel, stage=kwargs['stage'], num_hops=kwargs['num_hops'])
+        tunnel_handler = functools.partial(handle_tunnel, stage=kwargs['stage'], num_hops=kwargs['num_hops'],
+                                           die_after=kwargs['die_after'])
         proxy_selector.register(my_tunnel, selectors.EVENT_READ, tunnel_handler)
 
     global routers

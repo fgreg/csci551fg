@@ -24,6 +24,7 @@ import csci551fg.router
 num_routers = 0
 stage = 1
 minitor_hops = 1
+die_after = None
 
 # External interfaces available for assignment to routers
 INTERFACES = [
@@ -49,7 +50,7 @@ log = logging.getLogger('csci551fg.driver')
 RouterConfig = namedtuple('RouterConfig', [
     'proxy_address', 'stage', 'num_routers',
     'router_index', 'buffer_size', 'ip_address',
-    'interface_name', 'pid', 'router_subnet'
+    'interface_name', 'pid', 'router_subnet', 'die_after'
 ])
 
 
@@ -80,17 +81,14 @@ def main():
             routers.append(child_pid)
 
     if not child:
-        csci551fg.proxy.proxy(routers=routers, stage=stage, num_hops=minitor_hops)
+        csci551fg.proxy.proxy(routers=routers, stage=stage, num_hops=minitor_hops, die_after=die_after)
     else:
         interface = INTERFACES[router_index]
         router_conf = RouterConfig(proxy_address=proxy_address, stage=stage,
                                    num_routers=num_routers, router_index=router_index,
                                    buffer_size=UDP_BUFFER_SIZE, ip_address=interface[0], interface_name=interface[1],
-                                   pid=os.getpid(), router_subnet=ROUTER_SUBNET)
+                                   pid=os.getpid(), router_subnet=ROUTER_SUBNET, die_after=die_after)
         csci551fg.router.Router(router_conf).start()
-        # csci551fg.router.setup_log(stage, router_conf.router_index)
-        # csci551fg.router.router(router_conf)
-
     log.debug("pid %d exit" % os.getpid())
 
 
@@ -119,6 +117,11 @@ def parse_config(conf_file):
     minitor_hops = next(iter([l for l in config if "minitor_hops" in l]), None)
     if minitor_hops:
         minitor_hops = int(minitor_hops.split(' ')[-1])
+
+    global die_after
+    die_after = next(iter([l for l in config if "die_after" in l]), None)
+    if die_after:
+        die_after = int(die_after.split(' ')[-1])
 
 
 # Called when module is run
