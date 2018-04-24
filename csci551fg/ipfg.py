@@ -44,7 +44,7 @@ def ip_icmp_checksum(data):
 
     # I don't get it. https://stackoverflow.com/questions/20247551/icmp-echo-checksum
     checksum = 0
-    # Only ICMP headers and data. Add one byte if odd
+    # Add one byte if odd
     if len(reply_data) % 2 == 0:
         checksumdata = reply_data
     else:
@@ -53,10 +53,11 @@ def ip_icmp_checksum(data):
 
     # Combine each 2 bytes into word and then sum
     for i in range(0, len(checksumdata), 2):
-        word = int.from_bytes(checksumdata[i:i + 2], 'big')
+        word = struct.unpack(">H", checksumdata[i:i + 2])[0]
         checksum += word
 
     # Add carry bits
+    checksum = (checksum >> 16) + (checksum & 0xffff)
     checksum += (checksum >> 16)
 
     # Ones compliment and mask to the correct size
@@ -83,13 +84,16 @@ class IPv4Packet(object):
         self.destination_ipv4 = ipaddress.IPv4Address(packet_data[16:20])
 
     def __repr__(self):
-        ip = ("IP: <version_IHL={}, tos={}, length={}, identification={}, " + \
-              "ip_flags_fragment={}, ip_ttl={}, protocol={}, ip_checksum={}, " + \
+        ip = ("IP: <version_IHL=0x{}, tos=0x{}, length=0x{}, identification=0x{}, " + \
+              "ip_flags_fragment=0x{}, ip_ttl=0x{}, protocol=0x{}, ip_checksum=0x{}, " + \
               "source={}, destination={}>").format(
             self.version_IHL.hex(), self.tos.hex(), self.total_length.hex(), self.identification.hex(),
             self.ip_flags_fragment.hex(), self.ip_ttl.hex(), self.protocol.hex(), self.ip_checksum.hex(),
             self.source_ipv4, self.destination_ipv4)
         return ip
+
+    def get_protocol(self):
+        return struct.unpack("!B", self.protocol)[0]
 
     def set_source(self, source_ipv4):
         new_packet = bytearray(len(self.packet_data))
@@ -155,6 +159,99 @@ class ICMPEcho(IPv4Packet):
         return ICMPEcho(bytes(reply_data))
 
 
+class TCPPacket(IPv4Packet):
+
+    def __init__(self, packet_data):
+        super().__init__(packet_data)
+
+        # TCP fields
+        self.source_port = packet_data[20:22]
+        self.destination_port = packet_data[22:24]
+        self.sequence_no = packet_data[24:28]
+        self.ack_no = packet_data[28:32]
+        self.data_offset_reserved = struct.pack("!B", (struct.unpack("!B", packet_data[32:33])[0] & ~(1 << 0)))
+        self.tcp_flags = struct.pack("!H", (struct.unpack("!H", packet_data[32:34])[0] & 0x1ff))
+        self.window_size = packet_data[34:36]
+        self.tcp_checksum = packet_data[36:38]
+        self.urgent = packet_data[38:40]
+
+    def __repr__(self):
+        ip = super().__repr__()
+        tcp = "TCP: <source_port={}, destination_port={}, sequence_no={}, ack_no={}, data_offset_reserved=0x{}, " \
+              "tcp_flags=0x{}, window_size=0x{}, tcp_checksum=0x{}, urgent=0x{}>".format(
+            self.get_source_port(), self.get_destination_port(), self.get_sequence_no(), self.get_ack_no(),
+            self.data_offset_reserved.hex(),
+            self.tcp_flags.hex(), self.window_size.hex(), self.tcp_checksum.hex(), self.urgent.hex())
+        return "{}\n{}".format(ip, tcp)
+
+    def get_source_port(self):
+        return struct.unpack("!H", self.source_port)[0]
+
+    def get_destination_port(self):
+        return struct.unpack("!H", self.destination_port)[0]
+
+    def get_sequence_no(self):
+        return struct.unpack("!I", self.sequence_no)[0]
+
+    def get_ack_no(self):
+        return struct.unpack("!I", self.ack_no)[0]
+
+    @staticmethod
+    def _checksum(packet_data):
+        new_packet = TCPPacket(packet_data)
+
+        checksum_data = bytearray(12 + len(new_packet.packet_data[20:]))
+        checksum_data[0:4] = new_packet.source_ipv4.packed
+        checksum_data[4:8] = new_packet.destination_ipv4.packed
+        checksum_data[8:9] = [0]
+        checksum_data[9:10] = struct.pack("!B", new_packet.get_protocol())
+        checksum_data[10:12] = struct.pack("!H", len(new_packet.packet_data[20:]))
+        checksum_data[12:] = new_packet.packet_data[20:]
+        checksum_data[28:30] = [0, 0]
+
+        new_packet_data = bytearray(len(new_packet.packet_data))
+        new_packet_data[:] = new_packet.packet_data
+
+        checksum = ip_icmp_checksum(checksum_data)
+        new_packet_data[36:38] = checksum
+
+        # print("packet data 0x{}\n"
+        #       "len checksum_data {}\n"
+        #       "source ip {}\t0x{}\n"
+        #       "dest ip {}\t0x{}\n"
+        #       "reserved 0x{}\n"
+        #       "protocol 0x{}\n"
+        #       "length {}\t0x{}\n"
+        #       "tcp header and data len {} 0x{}\n"
+        #       "checksum 0x{}\n"
+        #       "new packet data 0x{}\n"
+        #       "new checksum 0x{}\n".format(
+        #     packet_data.hex(),
+        #     len(checksum_data),
+        #     new_packet.source_ipv4, checksum_data[0:4].hex(),
+        #     new_packet.destination_ipv4, checksum_data[4:8].hex(),
+        #     checksum_data[8:9].hex(),
+        #     checksum_data[9:10].hex(),
+        #     struct.unpack("!H", checksum_data[10:12])[0], checksum_data[10:12].hex(),
+        #     len(new_packet.packet_data), checksum_data[12:].hex(),
+        #     checksum_data[48:50].hex(),
+        #     new_packet_data.hex(),
+        #     new_packet_data[36:38].hex()
+        # ))
+
+        return new_packet_data
+
+    def set_source(self, source_ipv4):
+        new_packet_data = TCPPacket._checksum(super().set_source(source_ipv4).packet_data)
+
+        return self.__class__(bytes(new_packet_data))
+
+    def set_destination(self, destination_ipv4):
+        new_packet_data = TCPPacket._checksum(super().set_destination(destination_ipv4).packet_data)
+
+        return self.__class__(bytes(new_packet_data))
+
+
 class MCMPacket(IPv4Packet):
 
     def __init__(self, packet_data):
@@ -181,6 +278,12 @@ class MCMPacket(IPv4Packet):
         mcm = "MCM: <message_type=0x{}, circuit_id=0x{}>".format(
             self.message_type.hex(), self.circuit_id.hex())
         return "{}\n{}".format(ip, mcm)
+
+    def get_message_type(self):
+        return struct.unpack("!B", self.message_type)[0]
+
+    def get_circuit_id(self):
+        return struct.unpack("!H", self.circuit_id)[0]
 
     def set_message_type(self, message_type):
         new_data = bytearray(len(self.packet_data))
@@ -320,7 +423,7 @@ class RelayData(MCMPacket):
 
     def __repr__(self):
         ip_mcm = super().__repr__()
-        rd = "RD: <contents={}>".format(self.contents)
+        rd = "RD: <contents=0x{}>".format(self.contents.hex())
         return "{}\n{}".format(ip_mcm, rd)
 
     def set_contents(self, contents):

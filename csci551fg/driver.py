@@ -52,6 +52,7 @@ RouterConfig = namedtuple('RouterConfig', [
     'interface_name', 'pid', 'router_subnet'
 ])
 
+
 def main():
     """
     Opens a port, forks routers and starts the proxy.
@@ -59,7 +60,8 @@ def main():
     conf_file = sys.argv[1]
     parse_config(conf_file)
 
-    log.debug("num_routers: %d, stage: %d, minitor_hops: %s" % (num_routers, stage, minitor_hops if minitor_hops else "N/A"))
+    log.debug(
+        "num_routers: %d, stage: %d, minitor_hops: %s" % (num_routers, stage, minitor_hops if minitor_hops else "N/A"))
 
     # Setup log for proxy then open the UDP port for routers
     csci551fg.proxy.setup_log(stage)
@@ -78,15 +80,16 @@ def main():
             routers.append(child_pid)
 
     if not child:
-        csci551fg.proxy.proxy(routers=routers, stage=stage)
+        csci551fg.proxy.proxy(routers=routers, stage=stage, num_hops=minitor_hops)
     else:
         interface = INTERFACES[router_index]
         router_conf = RouterConfig(proxy_address=proxy_address, stage=stage,
-            num_routers=num_routers, router_index=router_index,
-            buffer_size=UDP_BUFFER_SIZE, ip_address=interface[0], interface_name=interface[1],
-            pid=os.getpid(), router_subnet=ROUTER_SUBNET)
-        csci551fg.router.setup_log(stage, router_conf.router_index)
-        csci551fg.router.router(router_conf)
+                                   num_routers=num_routers, router_index=router_index,
+                                   buffer_size=UDP_BUFFER_SIZE, ip_address=interface[0], interface_name=interface[1],
+                                   pid=os.getpid(), router_subnet=ROUTER_SUBNET)
+        csci551fg.router.Router(router_conf).start()
+        # csci551fg.router.setup_log(stage, router_conf.router_index)
+        # csci551fg.router.router(router_conf)
 
     log.debug("pid %d exit" % os.getpid())
 
@@ -116,6 +119,7 @@ def parse_config(conf_file):
     minitor_hops = next(iter([l for l in config if "minitor_hops" in l]), None)
     if minitor_hops:
         minitor_hops = int(minitor_hops.split(' ')[-1])
+
 
 # Called when module is run
 if __name__ == '__main__':
