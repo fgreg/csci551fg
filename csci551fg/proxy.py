@@ -215,7 +215,7 @@ def _relay_data(circuit, message, stage, num_hops, encrypted=False):
         mcm_red = csci551fg.ipfg.RelayEncryptedData(bytes(23)) \
             .set_circuit_id(circuit.circuit_id) \
             .set_source(ipaddress.IPv4Address('0.0.0.0')) \
-            .encrypt_contents(keys, message.packet_data)
+            .encrypt_contents(keys, message.set_source(ipaddress.IPv4Address('0.0.0.0')).packet_data)
         router_address = circuit.first_hop['address']
 
         message = mcm_red
@@ -310,11 +310,6 @@ def handle_tunnel(tunnel, mask, stage=None, num_hops=None):
 
         _udp_send(stage, message, num_hops)
 
-    # if mask & selectors.EVENT_WRITE:
-    #     if _echo_replies:
-    #         reply = _echo_replies.pop()
-    #
-
 
 def proxy(**kwargs):
     proxy_logger.debug("starting proxy %s" % kwargs)
@@ -322,7 +317,6 @@ def proxy(**kwargs):
     if kwargs['stage'] >= 2:
         global my_tunnel
         my_tunnel = csci551fg.tunnel.tun_alloc("tun1", [csci551fg.tunnel.IFF_TUN, csci551fg.tunnel.IFF_NO_PI])
-        # proxy_selector.register(my_tunnel, selectors.EVENT_READ | selectors.EVENT_WRITE, handle_tunnel)
         tunnel_handler = functools.partial(handle_tunnel, stage=kwargs['stage'], num_hops=kwargs['num_hops'])
         proxy_selector.register(my_tunnel, selectors.EVENT_READ, tunnel_handler)
 

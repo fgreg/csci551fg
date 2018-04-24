@@ -78,8 +78,13 @@ class Router(object):
         self.udp_connection.bind((socket.gethostbyname(socket.gethostname()), 0))
         self.udp_connection.sendto(struct.pack("!2I", self.pid, int(ipaddress.IPv4Address(self.ip_address))),
                                    self.proxy_address)
-        self.logger.info(
-            "router: %d, pid: %d, port: %d" % (self.router_index + 1, self.pid, self.udp_connection.getsockname()[1]))
+        if self.stage < 5:
+            self.logger.info("router: {}, pid: {}, port: {}".format(self.router_index + 1, self.pid,
+                                                                    self.udp_connection.getsockname()[1]))
+        else:
+            self.logger.info("router: {}, pid: {}, port: {}, IP: {}".format(self.router_index + 1, self.pid,
+                                                                            self.udp_connection.getsockname()[1],
+                                                                            self.ip_address))
         self.selector.register(self.udp_connection, selectors.EVENT_READ, self.handle_udp_connection)
 
         # Setup the connection to the external interface_name for ICMP
