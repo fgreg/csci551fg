@@ -194,7 +194,7 @@ class Router(object):
 
         else:
             # New circuit
-            id_o = (self.router_index + 1) * 256 + (len(self._circuit_list) + 1)
+            id_o = (self.router_index + 1) * 256 + (len(self.circuit_list) + 1)
             (next_hop,) = struct.unpack("!H", mcm_ce.next_hop)
             self.circuit_list.append(CircuitEntry(id_i, id_o, address[1], next_hop, None))
             self.logger.info(
@@ -441,8 +441,8 @@ class Router(object):
         if ip_packet.destination_ipv4 == self.ip_address:
             if self.stage <= 4:
                 echo_message = csci551fg.ipfg.ICMPEcho(data)
-                self.info("ICMP from raw sock, src: %s, dst: %s, type: %s",
-                          ip_packet.source_ipv4, ip_packet.destination_ipv4, echo_message.icmp_type[0])
+                self.logger.info("ICMP from raw sock, src: %s, dst: %s, type: %s",
+                                 ip_packet.source_ipv4, ip_packet.destination_ipv4, echo_message.icmp_type[0])
 
                 incoming = ip_packet.set_destination(ipaddress.IPv4Address('10.0.2.15'))
                 self.udp_connection.sendto(incoming.packet_data, self.proxy_address)
